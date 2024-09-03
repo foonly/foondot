@@ -1,0 +1,26 @@
+name: dotsync build
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 1.22.x
+      - name: Install dependencies
+        run: go get .
+      - name: Build executable
+        run: go build -ldflags "-s -w"
+      - name: Create Release
+        uses: ncipollo/release-action@v1
+        with:
+          artifacts: "dotsync"
