@@ -51,20 +51,20 @@ func readConfig() {
 
 func handleDot(item Item, dotfiles string) {
 	source := path.Join(xdg.Home, dotfiles, item.Source)
-	target := path.Join(xdg.Home, "test", item.Target)
+	target := path.Join(xdg.Home, item.Target)
 	dir := path.Dir(target)
 	err := os.Mkdir(dir, os.ModePerm)
 	if err == nil {
 		fmt.Println("Created directory ", dir)
 	}
-	fmt.Println("Source: ", source)
-	fmt.Println("Target: ", target)
-	fmt.Println("Dir: ", dir)
-
 	if stat, err := os.Lstat(target); err == nil && stat.Mode()&os.ModeSymlink == os.ModeSymlink {
-		fmt.Println("Is symlink")
+		os.Remove(target)
+	}
+	err = os.Symlink(source, target)
+	fmt.Println(source, " => ", target)
+
+	if err != nil {
+		fmt.Println("Error linking ", target)
 	}
 
-	err = os.Symlink(source, target)
-	fmt.Println(err)
 }
