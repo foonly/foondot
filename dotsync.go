@@ -25,15 +25,12 @@ type Config struct {
 	Dots     []Item
 }
 
-func check(e error) {
-	if e != nil {
-		panic(e)
-	}
-}
-
 func readConfig() {
-	data, err := os.ReadFile(path.Join(xdg.ConfigHome, "dotsync/config.toml"))
-	check(err)
+	configFile := path.Join(xdg.ConfigHome, "dotsync.toml")
+	data, err := os.ReadFile(configFile)
+	if err != nil {
+		fmt.Println("Config file not found in ", configFile)
+	}
 
 	var cfg Config
 
