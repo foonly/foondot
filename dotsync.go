@@ -50,6 +50,21 @@ func readConfig() {
 }
 
 func handleDot(item Item, dotfiles string) {
-	fmt.Println("Source: ", path.Join(xdg.ConfigHome, dotfiles, item.Source))
-	fmt.Println("Target: ", path.Join(xdg.ConfigHome, item.Target))
+	source := path.Join(xdg.Home, dotfiles, item.Source)
+	target := path.Join(xdg.Home, "test", item.Target)
+	dir := path.Dir(target)
+	err := os.Mkdir(dir, os.ModePerm)
+	if err == nil {
+		fmt.Println("Created directory ", dir)
+	}
+	fmt.Println("Source: ", source)
+	fmt.Println("Target: ", target)
+	fmt.Println("Dir: ", dir)
+
+	if stat, err := os.Lstat(target); err == nil && stat.Mode()&os.ModeSymlink == os.ModeSymlink {
+		fmt.Println("Is symlink")
+	}
+
+	err = os.Symlink(source, target)
+	fmt.Println(err)
 }
