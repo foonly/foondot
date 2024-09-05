@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
@@ -8,6 +9,14 @@ import (
 
 	"github.com/adrg/xdg"
 	"github.com/pelletier/go-toml/v2"
+)
+
+const (
+	isFailed    = iota
+	notExists   = iota
+	isSymlink   = iota
+	isDirectory = iota
+	isFile      = iota
 )
 
 func main() {
@@ -29,7 +38,8 @@ func readConfig() {
 	configFile := path.Join(xdg.ConfigHome, "dotsync.toml")
 	data, err := os.ReadFile(configFile)
 	if err != nil {
-		fmt.Println("Config file not found in ", configFile)
+		fmt.Println("Config file not found in", configFile)
+		os.Exit(1)
 	}
 
 	var cfg Config
@@ -38,7 +48,7 @@ func readConfig() {
 	err = toml.Unmarshal([]byte(data), &cfg)
 	if err != nil {
 		fmt.Println("Error reading TOML file:", err)
-		os.Exit(1)
+		os.Exit(2)
 	}
 
 	for _, element := range cfg.Dots {
@@ -52,16 +62,43 @@ func handleDot(item Item, dotfiles string) {
 	dir := path.Dir(target)
 	err := os.Mkdir(dir, os.ModePerm)
 	if err == nil {
-		fmt.Println("Created directory ", dir)
+		// No error means directory was created.
+		fmt.Println("Created directory", dir)
 	}
-	if stat, err := os.Lstat(target); err == nil && stat.Mode()&os.ModeSymlink == os.ModeSymlink {
+	fileType := getType(target)
+
+	if fileType == isSymlink {
+		// Remove target if it's a symlink.
 		os.Remove(target)
 	}
+	if fileType == isDirectory || fileType == isFile {
+		// Target is directory.
+		err := os.Rename(target, source)
+		if err == nil {
+			fmt.Println("Moving before linking:", target, "=>", source)
+		}
+	}
 	err = os.Symlink(source, target)
-	fmt.Println(source, " => ", target)
+	fmt.Println("Linking:", source, "=>", target)
 
 	if err != nil {
-		fmt.Println("Error linking ", target)
+		fmt.Println("Error linking:", target)
 	}
 
+}
+
+func getType(fileName string) int {
+	stat, err := os.Lstat(fileName)
+	if errors.Is(err, os.ErrNotExist) {
+		return notExists
+	} else if err != nil {
+		return isFailed
+	}
+	if stat.Mode()&os.ModeSymlink == os.ModeSymlink {
+		return isSymlink
+	}
+	if stat.Mode()&os.ModeDir == os.ModeDir {
+		return isDirectory
+	}
+	return isFile
 }
