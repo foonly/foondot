@@ -72,10 +72,12 @@ func handleDot(item Item, dotfiles string) {
 		os.Remove(target)
 	}
 	if fileType == isDirectory || fileType == isFile {
-		// Target is directory.
-		err := os.Rename(target, source)
-		if err == nil {
-			fmt.Println("Moving before linking:", target, "=>", source)
+		// Target is not a symlink.
+		if getType(source) == notExists {
+			err := os.Rename(target, source)
+			if err == nil {
+				fmt.Println("Moving before linking:", target, "=>", source)
+			}
 		}
 	}
 	err = os.Symlink(source, target)
