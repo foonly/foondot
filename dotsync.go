@@ -1,7 +1,9 @@
 package main
 
 import (
+	_ "embed"
 	"errors"
+	"flag"
 	"fmt"
 	"os"
 
@@ -11,6 +13,9 @@ import (
 	"github.com/pelletier/go-toml/v2"
 )
 
+/**
+ * File types.
+ */
 const (
 	isFailed    = iota
 	notExists   = iota
@@ -19,23 +24,40 @@ const (
 	isFile      = iota
 )
 
-func main() {
-	readConfig()
-}
-
+/**
+ * A single dotfile.
+ */
 type Item struct {
 	Source string
 	Target string
 }
 
+/**
+ * The config file structure.
+ */
 type Config struct {
 	Version  int
 	Dotfiles string
 	Dots     []Item
 }
 
-func readConfig() {
-	configFile := path.Join(xdg.ConfigHome, "dotsync.toml")
+//go:embed version.txt
+var version string
+
+/**
+ * Main function.
+ */
+func main() {
+	configFile := flag.String("config", path.Join(xdg.ConfigHome, "dotsync.toml"), "Config file location")
+	flag.Parse()
+	fmt.Println("Version:", version)
+	readConfig(*configFile)
+}
+
+/**
+ * Reads the config file and handles the dotfiles.
+ */
+func readConfig(configFile string) {
 	data, err := os.ReadFile(configFile)
 	if err != nil {
 		fmt.Println("Config file not found in", configFile)
@@ -56,6 +78,9 @@ func readConfig() {
 	}
 }
 
+/**
+ * Handles a single dotfile.
+ */
 func handleDot(item Item, dotfiles string) {
 	source := path.Join(xdg.Home, dotfiles, item.Source)
 	target := path.Join(xdg.Home, item.Target)
@@ -89,6 +114,9 @@ func handleDot(item Item, dotfiles string) {
 
 }
 
+/**
+ * Returns the type of a file.
+ */
 func getType(fileName string) int {
 	stat, err := os.Lstat(fileName)
 	if errors.Is(err, os.ErrNotExist) {
