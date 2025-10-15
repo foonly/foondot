@@ -1,8 +1,8 @@
-dotsync: dotsync.go
-	go build -ldflags "-s -w"
+foondot: foondot.go
+	go build
 
 clean:
 	go clean
 
-install:
-	mv dotsync ~/bin
+install: foondot
+	mv foondot ~/.local/bin

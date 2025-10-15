@@ -1,4 +1,4 @@
-module foonly.dev/dotsync
+module foonly.dev/foondot
 
 go 1.22.4
 

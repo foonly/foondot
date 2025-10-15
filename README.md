@@ -1,3 +1,3 @@
-# dotsync
+# foondot
 
-Very simple dotfile sync utility written i Go.
+A very simple dotfile sync utility written i Go.

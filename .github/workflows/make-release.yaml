@@ -1,4 +1,4 @@
-name: dotsync build
+name: foondot build
 
 on:
   push:
@@ -19,8 +19,8 @@ jobs:
       - name: Install dependencies
         run: go get .
       - name: Build executable
-        run: go build -ldflags "-s -w"
+        run: go build
       - name: Create Release
         uses: ncipollo/release-action@v1
         with:
-          artifacts: "dotsync"
+          artifacts: "foondot"

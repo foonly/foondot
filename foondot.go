@@ -13,6 +13,10 @@ import (
 	"github.com/pelletier/go-toml/v2"
 )
 
+const (
+	defaultConfigFileName = "foondot.toml"
+)
+
 /**
  * File types.
  */
@@ -48,7 +52,7 @@ var version string
  * Main function.
  */
 func main() {
-	configFile := flag.String("config", path.Join(xdg.ConfigHome, "dotsync.toml"), "Config file location")
+	configFile := flag.String("config", path.Join(xdg.ConfigHome, defaultConfigFileName), "Config file location")
 	flag.Parse()
 	fmt.Println("Version:", version)
 	readConfig(*configFile)
