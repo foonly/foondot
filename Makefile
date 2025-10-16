@@ -1,8 +1,14 @@
+BIN := foondot
+DESTDIR :=
+PREFIX := /usr/local
+
 foondot: foondot.go
 	go build
 
+.PHONY: clean
 clean:
 	go clean
 
-install: foondot
-	mv foondot ~/.local/bin
+.PHONY: install
+install:
+	install -Dm755 ${BIN} $(DESTDIR)$(PREFIX)/bin/${BIN}

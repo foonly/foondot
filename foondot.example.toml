@@ -1,0 +1,11 @@
+# Place this file in your XDG_CONFIG folder (.config), and rename it to foondot.toml
+
+# Path to your dotfiles relative to your $HOME directory
+dotfiles = "dotfiles"
+
+# A dot entry representing a symlink, `source` is relative to `dotfiles_dir`
+# and `target` shall be relative to $HOME directory or absolute.
+dots = [
+    { source = "alacritty", target = ".config/alacritty" },
+    { source = "environment", target = ".config/environment.d" },
+]
