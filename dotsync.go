@@ -111,7 +111,19 @@ func readConfig(configFile string) Config {
 	return cfg
 }
 
+/**
+ * Reads the data file.
+ */
+func readData() []Item {
+	var data []Item
+	fileName := path.Join(xdg.DataHome, "dotsyncData")
+	fmt.Println(fileName)
+	return data
+}
+
 func executeDots(cfg Config) {
+	data := readData()
+	fmt.Println(data)
 	for _, element := range cfg.Dots {
 		handleDot(element, cfg.Dotfiles)
 	}
