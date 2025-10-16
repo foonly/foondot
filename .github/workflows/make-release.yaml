@@ -19,7 +19,7 @@ jobs:
       - name: Install dependencies
         run: go get .
       - name: Build executable
-        run: go build
+        run: go build -v -ldflags="-X main.version=${{github.ref_name}}"
       - name: Create Release
         uses: ncipollo/release-action@v1
         with:
