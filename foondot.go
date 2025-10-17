@@ -48,10 +48,9 @@ type Item struct {
  * The config file structure.
  */
 type Config struct {
-	Version  int
-	Dotfiles string
-	Color    bool
-	Dots     []Item
+	Dotfiles string `toml:"dotfiles" comment:"Path to your dotfiles relative to your $HOME directory"`
+	Color    bool   `toml:"color"    comment:"Enable color output"`
+	Dots     []Item `toml:"dots"     comment:"A dot entry representing a symlink, 'source' is relative to 'dotfiles'\nand 'target' shall be relative to $HOME directory or absolute.\nExample:\ndots = [{source = 'bash/bashrc', target = '.bashrc'}]"`
 }
 
 var version = "undefined"
@@ -61,11 +60,19 @@ var color = false
  * Main function.
  */
 func main() {
-	configFile := flag.String("c", path.Join(xdg.ConfigHome, defaultConfigFileName), "Config file location")
+	defaultConfigFile := path.Join(xdg.ConfigHome, defaultConfigFileName)
+	configFile := flag.String("c", defaultConfigFile, "Config file location")
 	force := flag.Bool("f", false, "Force relink, and move files out of the way")
 	showVersion := flag.Bool("v", false, "Show version")
 	showColor := flag.Bool("cc", false, "Show color")
 	flag.Parse()
+
+	// Check if using default config file and if it exists.
+	if *configFile == defaultConfigFile {
+		if _, err := os.Stat(defaultConfigFile); err != nil {
+			createDefaultConfig(defaultConfigFile)
+		}
+	}
 
 	if *showColor {
 		color = true
@@ -119,6 +126,29 @@ func readConfig(configFile string) Config {
 	}
 
 	return cfg
+}
+
+/**
+ * Create an empty default config file.
+ */
+func createDefaultConfig(configFile string) {
+	defaultConfig := Config{
+		Dotfiles: "dotfiles",
+		Color:    false,
+		Dots:     []Item{},
+	}
+
+	data, err := toml.Marshal(defaultConfig)
+	if err != nil {
+		printError("Error marshaling default config", err.Error())
+		os.Exit(3)
+	}
+
+	err = os.WriteFile(configFile, data, 0644)
+	if err != nil {
+		printError("Error writing default config", configFile, err.Error())
+		os.Exit(4)
+	}
 }
 
 /**
