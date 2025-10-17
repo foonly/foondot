@@ -49,10 +49,12 @@ type Item struct {
 type Config struct {
 	Version  int
 	Dotfiles string
+	Color    bool
 	Dots     []Item
 }
 
 var version = "undefined"
+var color = false
 
 /**
  * Main function.
@@ -61,12 +63,21 @@ func main() {
 	configFile := flag.String("c", path.Join(xdg.ConfigHome, defaultConfigFileName), "Config file location")
 	force := flag.Bool("f", false, "Force overwrite")
 	showVersion := flag.Bool("v", false, "Show version")
+	showColor := flag.Bool("color", false, "Show color")
 	flag.Parse()
+
+	if *showColor {
+		color = true
+	}
+	cfg := readConfig(*configFile)
+	if cfg.Color {
+		color = true
+	}
+
 	if *showVersion {
 		fmt.Fprintf(os.Stdout, "Version: %s\n", version)
 		os.Exit(0)
 	}
-	cfg := readConfig(*configFile)
 
 	numberLinked := 0
 	for _, element := range cfg.Dots {
@@ -93,7 +104,7 @@ func main() {
 func readConfig(configFile string) Config {
 	data, err := os.ReadFile(configFile)
 	if err != nil {
-		fmt.Fprintf(os.Stdout, "%sConfig file not found in %s%s%s\n", colorRed, colorYellow, configFile, colorNone)
+		printError("Config file not found in", configFile)
 		os.Exit(1)
 	}
 
@@ -102,7 +113,7 @@ func readConfig(configFile string) Config {
 	// Reading from a TOML file
 	err = toml.Unmarshal([]byte(data), &cfg)
 	if err != nil {
-		fmt.Fprintf(os.Stdout, "%sError reading TOML file: %s%s%s\n%s\n", colorRed, colorYellow, configFile, colorNone, err)
+		printError("Error reading TOML file", configFile, err.Error())
 		os.Exit(2)
 	}
 
@@ -129,7 +140,7 @@ func prepareTargetSource(target string, source string, force bool) {
 	err := os.Mkdir(dir, os.ModePerm)
 	if err == nil {
 		// No error means directory was created.
-		fmt.Fprintf(os.Stdout, "Created directory %s%s%s\n", colorYellow, dir, colorNone)
+		printMessage("Created directory", dir)
 	}
 
 	targetType := getType(target)
@@ -144,20 +155,20 @@ func prepareTargetSource(target string, source string, force bool) {
 		if targetType == isDirectory {
 			isDirFile = "directory"
 		}
-		fmt.Fprintf(os.Stdout, "Target is a %s: %s%s%s\n", isDirFile, colorYellow, target, colorNone)
+		printMessage("Target is a "+isDirFile, target)
 		sourceType := getType(source)
 
 		if sourceType == notExists {
 			err := os.Rename(target, source)
 			if err == nil {
-				fmt.Fprintf(os.Stdout, "Moving before linking: %s%s%s => %s%s%s\n", colorYellow, target, colorNone, colorYellow, source, colorNone)
+				printMessage("Moving before linking", target, source)
 			}
 		} else if force {
 			sourceConflict := source + ".conflict"
 
 			err := os.Rename(target, sourceConflict)
 			if err == nil {
-				fmt.Fprintf(os.Stdout, "Both source and target exist, forcing move out of the way: %s%s%s => %s%s%s\n", colorYellow, target, colorNone, colorYellow, sourceConflict, colorNone)
+				printMessage("Both source and target exist, forcing move out of the way", target, sourceConflict)
 			}
 		}
 	}
@@ -171,19 +182,19 @@ func doLink(source string, target string) bool {
 	targetType := getType(target)
 
 	if sourceType == notExists {
-		fmt.Fprintf(os.Stdout, "%sSource does not exist: %s%s%s\n", colorRed, colorYellow, source, colorNone)
+		printError("Source does not exist", source)
 		return false
 	}
 	if sourceType == isSymlink {
-		fmt.Fprintf(os.Stdout, "%sSource is a symlink: %s%s%s\n", colorRed, colorYellow, source, colorNone)
+		printError("Source is a symlink", source)
 		return false
 	}
 
 	if targetType == notExists && (sourceType == isDirectory || sourceType == isFile) {
 		err := os.Symlink(source, target)
-		fmt.Fprintf(os.Stdout, "Linking: %s%s%s => %s%s%s\n", colorYellow, source, colorNone, colorYellow, target, colorNone)
+		printMessage("Linking", source, target)
 		if err != nil {
-			fmt.Fprintf(os.Stdout, "Error linking: %s%s%s\n", colorYellow, target, colorNone)
+			printError("Error linking", target)
 		}
 		return err == nil
 	}
@@ -207,4 +218,48 @@ func getType(fileName string) int {
 		return isDirectory
 	}
 	return isFile
+}
+
+/**
+ * Prints a message to the console.
+ */
+func printMessage(text ...string) {
+	if len(text) >= 3 {
+		if color {
+			fmt.Fprintf(os.Stdout, "%s: %s%s%s => %s%s%s\n", text[0], colorGreen, text[1], colorNone, colorYellow, text[2], colorNone)
+		} else {
+			fmt.Fprintf(os.Stdout, "%s: %s => %s\n", text[0], text[1], text[2])
+		}
+	} else if len(text) == 2 {
+		if color {
+			fmt.Fprintf(os.Stdout, "%s: %s%s%s\n", text[0], colorYellow, text[1], colorNone)
+		} else {
+			fmt.Fprintf(os.Stdout, "%s: %s\n", text[0], text[1])
+		}
+	}
+}
+
+/**
+ * Prints an error message to the console.
+ */
+func printError(text ...string) {
+	if len(text) >= 3 {
+		if color {
+			fmt.Fprintf(os.Stderr, "%s%s: %s%s%s\n%s\n", colorRed, text[0], colorYellow, text[1], colorNone, text[2])
+		} else {
+			fmt.Fprintf(os.Stderr, "%s: %s\n%s\n", text[0], text[1], text[2])
+		}
+	} else if len(text) == 2 {
+		if color {
+			fmt.Fprintf(os.Stderr, "%s%s: %s%s%s\n", colorRed, text[0], colorYellow, text[1], colorNone)
+		} else {
+			fmt.Fprintf(os.Stderr, "%s: %s\n", text[0], text[1])
+		}
+	} else {
+		if color {
+			fmt.Fprintf(os.Stderr, "%s%s\n", colorRed, text[0])
+		} else {
+			fmt.Fprintf(os.Stderr, "%s\n", text[0])
+		}
+	}
 }
