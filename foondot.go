@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strconv"
 
 	"path"
 
@@ -61,9 +62,9 @@ var color = false
  */
 func main() {
 	configFile := flag.String("c", path.Join(xdg.ConfigHome, defaultConfigFileName), "Config file location")
-	force := flag.Bool("f", false, "Force overwrite")
+	force := flag.Bool("f", false, "Force relink, and move files out of the way")
 	showVersion := flag.Bool("v", false, "Show version")
-	showColor := flag.Bool("color", false, "Show color")
+	showColor := flag.Bool("cc", false, "Show color")
 	flag.Parse()
 
 	if *showColor {
@@ -155,7 +156,7 @@ func prepareTargetSource(target string, source string, force bool) {
 		if targetType == isDirectory {
 			isDirFile = "directory"
 		}
-		printMessage("Target is a "+isDirFile, target)
+		printError("Target is a "+isDirFile, target)
 		sourceType := getType(source)
 
 		if sourceType == notExists {
@@ -165,11 +166,25 @@ func prepareTargetSource(target string, source string, force bool) {
 			}
 		} else if force {
 			sourceConflict := source + ".conflict"
+			count := 0
+			for {
+				// Find an available filename
+				conflictType := getType(sourceConflict)
+				if conflictType == notExists {
+					break
+				}
+				count++
+				sourceConflict = source + ".conflict." + strconv.Itoa(count)
+			}
 
 			err := os.Rename(target, sourceConflict)
 			if err == nil {
 				printMessage("Both source and target exist, forcing move out of the way", target, sourceConflict)
+			} else {
+				printError("Couldn't backup target, skipping", target)
 			}
+		} else {
+			printError("Both source and target exist. Skipping", source, "Use -f to override.")
 		}
 	}
 }
