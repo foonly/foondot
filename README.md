@@ -19,3 +19,8 @@ dots = [
     { source = "bashrc", target = ".bashrc" },
 ]
 ```
+
+### Getting started
+
+If the target exists as a folder or file, but the source doesn't, the utility first moves it to the dotfiles folder, so you don't need to do that manually.
+If both source and target is a file of folder, it will not do anything. But if used with the -f (force) flag, it will move the target to the dotfiles folder with an appanded .conflict suffix.
