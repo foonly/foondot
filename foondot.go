@@ -40,8 +40,9 @@ const (
  * A single dotfile.
  */
 type Item struct {
-	Source string
-	Target string
+	Source   string
+	Target   string
+	Hostname []string
 }
 
 /**
@@ -55,6 +56,7 @@ type Config struct {
 
 var version = "undefined"
 var color = false
+var hostname = "unknown"
 
 /**
  * Main function.
@@ -67,11 +69,17 @@ func main() {
 	showColor := flag.Bool("cc", false, "Show color")
 	flag.Parse()
 
+	hostname, _ = os.Hostname()
+
+	if *showVersion {
+		fmt.Fprintf(os.Stdout, "Version: %s\nHostname: %s\n", version, hostname)
+		os.Exit(0)
+	}
+
 	// Check if using default config file and if it exists.
-	if *configFile == defaultConfigFile {
-		if _, err := os.Stat(defaultConfigFile); err != nil {
-			createDefaultConfig(defaultConfigFile)
-		}
+	if *configFile == defaultConfigFile && getType(*configFile) == notExists {
+		createDefaultConfig(defaultConfigFile)
+		os.Exit(0)
 	}
 
 	if *showColor {
@@ -80,11 +88,6 @@ func main() {
 	cfg := readConfig(*configFile)
 	if cfg.Color {
 		color = true
-	}
-
-	if *showVersion {
-		fmt.Fprintf(os.Stdout, "Version: %s\n", version)
-		os.Exit(0)
 	}
 
 	numberLinked := 0
@@ -137,6 +140,8 @@ func createDefaultConfig(configFile string) {
 		Color:    false,
 		Dots:     []Item{},
 	}
+
+	printMessage("Creating config file in", configFile)
 
 	data, err := toml.Marshal(defaultConfig)
 	if err != nil {
