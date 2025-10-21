@@ -11,7 +11,6 @@ import (
 	"path"
 
 	"github.com/adrg/xdg"
-	"github.com/pelletier/go-toml/v2"
 )
 
 /**
@@ -35,24 +34,6 @@ const (
 	isDirectory = iota
 	isFile      = iota
 )
-
-/**
- * A single dotfile.
- */
-type Item struct {
-	Source   string
-	Target   string
-	Hostname []string
-}
-
-/**
- * The config file structure.
- */
-type Config struct {
-	Dotfiles string `toml:"dotfiles" comment:"Path to your dotfiles relative to your $HOME directory"`
-	Color    bool   `toml:"color"    comment:"Enable color output"`
-	Dots     []Item `toml:"dots"     comment:"A dot entry representing a symlink, 'source' is relative to 'dotfiles'\nand 'target' shall be relative to $HOME directory or absolute.\nExample:\ndots = [{source = 'bash/bashrc', target = '.bashrc'}]"`
-}
 
 var version = "undefined"
 var color = false
@@ -106,53 +87,6 @@ func main() {
 		fmt.Fprintf(os.Stdout, "All %d dotfiles linked.\n", len(cfg.Dots))
 	} else {
 		fmt.Fprintf(os.Stdout, "%d of %d dotfiles linked.\n", numberLinked, len(cfg.Dots))
-	}
-}
-
-/**
- * Reads the config file.
- */
-func readConfig(configFile string) Config {
-	data, err := os.ReadFile(configFile)
-	if err != nil {
-		printError("Config file not found in", configFile)
-		os.Exit(1)
-	}
-
-	var cfg Config
-
-	// Reading from a TOML file
-	err = toml.Unmarshal([]byte(data), &cfg)
-	if err != nil {
-		printError("Error reading TOML file", configFile, err.Error())
-		os.Exit(2)
-	}
-
-	return cfg
-}
-
-/**
- * Create an empty default config file.
- */
-func createDefaultConfig(configFile string) {
-	defaultConfig := Config{
-		Dotfiles: "dotfiles",
-		Color:    false,
-		Dots:     []Item{},
-	}
-
-	printMessage("Creating config file in", configFile)
-
-	data, err := toml.Marshal(defaultConfig)
-	if err != nil {
-		printError("Error marshaling default config", err.Error())
-		os.Exit(3)
-	}
-
-	err = os.WriteFile(configFile, data, 0644)
-	if err != nil {
-		printError("Error writing default config", configFile, err.Error())
-		os.Exit(4)
 	}
 }
 
@@ -282,48 +216,4 @@ func getType(fileName string) int {
 		return isDirectory
 	}
 	return isFile
-}
-
-/**
- * Prints a message to the console.
- */
-func printMessage(text ...string) {
-	if len(text) >= 3 {
-		if color {
-			fmt.Fprintf(os.Stdout, "%s: %s%s%s => %s%s%s\n", text[0], colorGreen, text[1], colorNone, colorYellow, text[2], colorNone)
-		} else {
-			fmt.Fprintf(os.Stdout, "%s: %s => %s\n", text[0], text[1], text[2])
-		}
-	} else if len(text) == 2 {
-		if color {
-			fmt.Fprintf(os.Stdout, "%s: %s%s%s\n", text[0], colorYellow, text[1], colorNone)
-		} else {
-			fmt.Fprintf(os.Stdout, "%s: %s\n", text[0], text[1])
-		}
-	}
-}
-
-/**
- * Prints an error message to the console.
- */
-func printError(text ...string) {
-	if len(text) >= 3 {
-		if color {
-			fmt.Fprintf(os.Stderr, "%s%s: %s%s%s\n%s\n", colorRed, text[0], colorYellow, text[1], colorNone, text[2])
-		} else {
-			fmt.Fprintf(os.Stderr, "%s: %s\n%s\n", text[0], text[1], text[2])
-		}
-	} else if len(text) == 2 {
-		if color {
-			fmt.Fprintf(os.Stderr, "%s%s: %s%s%s\n", colorRed, text[0], colorYellow, text[1], colorNone)
-		} else {
-			fmt.Fprintf(os.Stderr, "%s: %s\n", text[0], text[1])
-		}
-	} else {
-		if color {
-			fmt.Fprintf(os.Stderr, "%s%s\n", colorRed, text[0])
-		} else {
-			fmt.Fprintf(os.Stderr, "%s\n", text[0])
-		}
-	}
 }
