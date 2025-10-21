@@ -38,7 +38,7 @@ Foondot creates symlinks from the `source` files/directories in your `dotfiles` 
 
 ### Handling Conflicts
 
-If a file or directory already exists at the `target` location, Foondot will move the existing file/directory into your `dotfiles` directory before linking. If the source file already exists, it moves the target into the dotfiles folder, appending `.conflict` to the name. For example, if `.config/program` already exists, it will be moved to `dotfiles/program.conflict`.
+If a file or directory already exists at the `target` location, Foondot will move the existing file/directory into your `dotfiles` directory before linking. If the source file/directory also exists, it appends `.conflict` to the name. For example, if `.config/program` already exists, it will be moved to `dotfiles/program.conflict`.
 
 ### Removing Symlinks
 
