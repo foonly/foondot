@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"slices"
 	"strconv"
 
 	"path"
@@ -91,9 +92,21 @@ func main() {
 }
 
 /**
- * Handles a single dotfile.
+* Handles a single dotfile item, determining source and target paths,
+* preparing the target location, and creating the symlink.
+*
+* @param item The dotfile item to handle.
+* @param dotfiles The base directory for dotfiles.
+* @param force Whether to force relinking and move existing files.
+* @return True if the link was successfully created, false otherwise.
  */
 func handleDot(item Item, dotfiles string, force bool) bool {
+
+	// Skip if hostname is defined and not matching a record in the array.
+	if len(item.Hostname) > 0 && !slices.Contains(item.Hostname, hostname) {
+		return false
+	}
+
 	source := path.Join(xdg.Home, dotfiles, item.Source)
 	target := path.Join(xdg.Home, item.Target)
 
@@ -103,7 +116,13 @@ func handleDot(item Item, dotfiles string, force bool) bool {
 }
 
 /**
- * Prepare target & source.
+ * Prepares the target location for a symlink. This includes creating parent
+ * directories, removing existing symlinks (if force is enabled), and moving
+ * existing files or directories out of the way to avoid conflicts.
+ *
+ * @param target The path to the target location for the symlink.
+ * @param source The path to the source file or directory that will be linked.
+ * @param force Whether to force relinking, moving existing files if necessary.
  */
 func prepareTargetSource(target string, source string, force bool) {
 	targetDir := path.Dir(target)
@@ -173,7 +192,13 @@ func prepareTargetSource(target string, source string, force bool) {
 }
 
 /**
- * Do the actual linking.
+ * Creates a symbolic link from source to target. Checks if source exists and
+ * is not a symlink. Checks if the target does not exist and the source is
+ * either a directory or a file.
+ *
+ * @param source The path to the source file or directory.
+ * @param target The path to the target location for the symlink.
+ * @return True if the link was successfully created, false otherwise.
  */
 func doLink(source string, target string) bool {
 	sourceType := getType(source)
@@ -200,7 +225,10 @@ func doLink(source string, target string) bool {
 }
 
 /**
- * Returns the type of a file.
+ * Determines the type of a file or directory.
+ *
+ * @param fileName The path to the file or directory.
+ * @return An integer representing the file type (notExists, isSymlink, isDirectory, isFile, isFailed).
  */
 func getType(fileName string) int {
 	stat, err := os.Lstat(fileName)
