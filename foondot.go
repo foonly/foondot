@@ -172,11 +172,13 @@ func handleDot(item Item, dotfiles string, force bool) bool {
  * Prepare target & source.
  */
 func prepareTargetSource(target string, source string, force bool) {
-	dir := path.Dir(target)
-	err := os.Mkdir(dir, os.ModePerm)
-	if err == nil {
-		// No error means directory was created.
-		printMessage("Created directory", dir)
+	targetDir := path.Dir(target)
+	if getType(targetDir) == notExists {
+		err := os.MkdirAll(targetDir, os.ModePerm)
+		if err == nil {
+			// No error means directory was created.
+			printMessage("Created directory", targetDir)
+		}
 	}
 
 	targetType := getType(target)
@@ -195,11 +197,23 @@ func prepareTargetSource(target string, source string, force bool) {
 		sourceType := getType(source)
 
 		if sourceType == notExists {
-			err := os.Rename(target, source)
-			if err == nil {
+			sourceDir := path.Dir(source)
+			if getType(sourceDir) == notExists {
+				err := os.MkdirAll(sourceDir, os.ModePerm)
+				if err == nil {
+					// No error means directory was created.
+					printMessage("Created directory", sourceDir)
+				} else {
+					printError("Couldn't create directory", sourceDir)
+				}
+			}
+
+			moveErr := os.Rename(target, source)
+			if moveErr == nil {
 				printMessage("Moving before linking", target, source)
 			}
 		} else if force {
+			printMessage("force", source)
 			sourceConflict := source + ".conflict"
 			count := 0
 			for {
