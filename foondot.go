@@ -6,12 +6,12 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"slices"
 	"strconv"
 
 	"path"
 
 	"github.com/adrg/xdg"
-	"github.com/pelletier/go-toml/v2"
 )
 
 /**
@@ -36,25 +36,9 @@ const (
 	isFile      = iota
 )
 
-/**
- * A single dotfile.
- */
-type Item struct {
-	Source string
-	Target string
-}
-
-/**
- * The config file structure.
- */
-type Config struct {
-	Dotfiles string `toml:"dotfiles" comment:"Path to your dotfiles relative to your $HOME directory"`
-	Color    bool   `toml:"color"    comment:"Enable color output"`
-	Dots     []Item `toml:"dots"     comment:"A dot entry representing a symlink, 'source' is relative to 'dotfiles'\nand 'target' shall be relative to $HOME directory or absolute.\nExample:\ndots = [{source = 'bash/bashrc', target = '.bashrc'}]"`
-}
-
 var version = "undefined"
 var color = false
+var hostname = "unknown"
 
 /**
  * Main function.
@@ -67,11 +51,17 @@ func main() {
 	showColor := flag.Bool("cc", false, "Show color")
 	flag.Parse()
 
+	hostname, _ = os.Hostname()
+
+	if *showVersion {
+		fmt.Fprintf(os.Stdout, "Version: %s\nHostname: %s\n", version, hostname)
+		os.Exit(0)
+	}
+
 	// Check if using default config file and if it exists.
-	if *configFile == defaultConfigFile {
-		if _, err := os.Stat(defaultConfigFile); err != nil {
-			createDefaultConfig(defaultConfigFile)
-		}
+	if *configFile == defaultConfigFile && getType(*configFile) == notExists {
+		createDefaultConfig(defaultConfigFile)
+		os.Exit(0)
 	}
 
 	if *showColor {
@@ -80,11 +70,6 @@ func main() {
 	cfg := readConfig(*configFile)
 	if cfg.Color {
 		color = true
-	}
-
-	if *showVersion {
-		fmt.Fprintf(os.Stdout, "Version: %s\n", version)
-		os.Exit(0)
 	}
 
 	numberLinked := 0
@@ -107,54 +92,21 @@ func main() {
 }
 
 /**
- * Reads the config file.
- */
-func readConfig(configFile string) Config {
-	data, err := os.ReadFile(configFile)
-	if err != nil {
-		printError("Config file not found in", configFile)
-		os.Exit(1)
-	}
-
-	var cfg Config
-
-	// Reading from a TOML file
-	err = toml.Unmarshal([]byte(data), &cfg)
-	if err != nil {
-		printError("Error reading TOML file", configFile, err.Error())
-		os.Exit(2)
-	}
-
-	return cfg
-}
-
-/**
- * Create an empty default config file.
- */
-func createDefaultConfig(configFile string) {
-	defaultConfig := Config{
-		Dotfiles: "dotfiles",
-		Color:    false,
-		Dots:     []Item{},
-	}
-
-	data, err := toml.Marshal(defaultConfig)
-	if err != nil {
-		printError("Error marshaling default config", err.Error())
-		os.Exit(3)
-	}
-
-	err = os.WriteFile(configFile, data, 0644)
-	if err != nil {
-		printError("Error writing default config", configFile, err.Error())
-		os.Exit(4)
-	}
-}
-
-/**
- * Handles a single dotfile.
+* Handles a single dotfile item, determining source and target paths,
+* preparing the target location, and creating the symlink.
+*
+* @param item The dotfile item to handle.
+* @param dotfiles The base directory for dotfiles.
+* @param force Whether to force relinking and move existing files.
+* @return True if the link was successfully created, false otherwise.
  */
 func handleDot(item Item, dotfiles string, force bool) bool {
+
+	// Skip if hostname is defined and not matching a record in the array.
+	if len(item.Hostname) > 0 && !slices.Contains(item.Hostname, hostname) {
+		return false
+	}
+
 	source := path.Join(xdg.Home, dotfiles, item.Source)
 	target := path.Join(xdg.Home, item.Target)
 
@@ -164,7 +116,13 @@ func handleDot(item Item, dotfiles string, force bool) bool {
 }
 
 /**
- * Prepare target & source.
+ * Prepares the target location for a symlink. This includes creating parent
+ * directories, removing existing symlinks (if force is enabled), and moving
+ * existing files or directories out of the way to avoid conflicts.
+ *
+ * @param target The path to the target location for the symlink.
+ * @param source The path to the source file or directory that will be linked.
+ * @param force Whether to force relinking, moving existing files if necessary.
  */
 func prepareTargetSource(target string, source string, force bool) {
 	targetDir := path.Dir(target)
@@ -234,7 +192,13 @@ func prepareTargetSource(target string, source string, force bool) {
 }
 
 /**
- * Do the actual linking.
+ * Creates a symbolic link from source to target. Checks if source exists and
+ * is not a symlink. Checks if the target does not exist and the source is
+ * either a directory or a file.
+ *
+ * @param source The path to the source file or directory.
+ * @param target The path to the target location for the symlink.
+ * @return True if the link was successfully created, false otherwise.
  */
 func doLink(source string, target string) bool {
 	sourceType := getType(source)
@@ -261,7 +225,10 @@ func doLink(source string, target string) bool {
 }
 
 /**
- * Returns the type of a file.
+ * Determines the type of a file or directory.
+ *
+ * @param fileName The path to the file or directory.
+ * @return An integer representing the file type (notExists, isSymlink, isDirectory, isFile, isFailed).
  */
 func getType(fileName string) int {
 	stat, err := os.Lstat(fileName)
@@ -277,48 +244,4 @@ func getType(fileName string) int {
 		return isDirectory
 	}
 	return isFile
-}
-
-/**
- * Prints a message to the console.
- */
-func printMessage(text ...string) {
-	if len(text) >= 3 {
-		if color {
-			fmt.Fprintf(os.Stdout, "%s: %s%s%s => %s%s%s\n", text[0], colorGreen, text[1], colorNone, colorYellow, text[2], colorNone)
-		} else {
-			fmt.Fprintf(os.Stdout, "%s: %s => %s\n", text[0], text[1], text[2])
-		}
-	} else if len(text) == 2 {
-		if color {
-			fmt.Fprintf(os.Stdout, "%s: %s%s%s\n", text[0], colorYellow, text[1], colorNone)
-		} else {
-			fmt.Fprintf(os.Stdout, "%s: %s\n", text[0], text[1])
-		}
-	}
-}
-
-/**
- * Prints an error message to the console.
- */
-func printError(text ...string) {
-	if len(text) >= 3 {
-		if color {
-			fmt.Fprintf(os.Stderr, "%s%s: %s%s%s\n%s\n", colorRed, text[0], colorYellow, text[1], colorNone, text[2])
-		} else {
-			fmt.Fprintf(os.Stderr, "%s: %s\n%s\n", text[0], text[1], text[2])
-		}
-	} else if len(text) == 2 {
-		if color {
-			fmt.Fprintf(os.Stderr, "%s%s: %s%s%s\n", colorRed, text[0], colorYellow, text[1], colorNone)
-		} else {
-			fmt.Fprintf(os.Stderr, "%s: %s\n", text[0], text[1])
-		}
-	} else {
-		if color {
-			fmt.Fprintf(os.Stderr, "%s%s\n", colorRed, text[0])
-		} else {
-			fmt.Fprintf(os.Stderr, "%s\n", text[0])
-		}
-	}
 }
