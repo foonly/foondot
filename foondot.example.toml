@@ -6,7 +6,7 @@ dotfiles = "dotfiles"
 # Enable color output
 color = false
 
-# A dot entry representing a symlink, `source` is relative to `dotfiles_dir`
+# A dot entry representing a symlink, `source` is relative to `dotfiles`
 # and `target` shall be relative to $HOME directory or absolute.
 dots = [
     { source = "program", target = ".config/program" },

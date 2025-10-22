@@ -1,6 +1,7 @@
 # Foondot
 
-Foondot is a utility that manages symlinks from a central repository, linking files and folders according to a configuration file. It is written in Go and statically linked, requiring no special dependencies.
+Foondot is a utility that manages symlinks from a local repository, linking files and folders according to a configuration file. Foondot doesn't handle any of the syncing of the repository. That can be handled by git or a utility like syncthing or dropbox.
+It is written in Go and thus statically linked, requiring no special dependencies.
 
 ## Configuration
 
@@ -15,7 +16,7 @@ dotfiles = "dotfiles"
 # Enable color output
 color = false
 
-# A dot entry representing a symlink, `source` is relative to `dotfiles_dir`
+# A dot entry representing a symlink, `source` is relative to `dotfiles`
 # and `target` shall be relative to $HOME directory or absolute.
 dots = [
     { source = "program", target = ".config/program", hostname = ["myhost"] },
