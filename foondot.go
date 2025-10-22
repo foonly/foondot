@@ -19,6 +19,8 @@ import (
  */
 const (
 	defaultConfigFileName = "foondot.toml"
+	dataFolderName        = "foondot"
+	dotsDataFileName      = "dots.json"
 	colorNone             = "\033[0m"
 	colorRed              = "\033[0;31m"
 	colorGreen            = "\033[0;32m"
@@ -72,16 +74,20 @@ func main() {
 		color = true
 	}
 
+	readDotsData()
+
 	numberLinked := 0
 	for _, element := range cfg.Dots {
 		if handleDot(element, cfg.Dotfiles, *force) {
 			numberLinked++
+
 		}
 	}
 
 	if *force {
 		fmt.Fprintf(os.Stdout, "Force mode enabled\n")
 	}
+	writeDotsData()
 	if numberLinked == 0 {
 		fmt.Fprintf(os.Stdout, "No new dotfiles linked.\n")
 	} else if numberLinked == len(cfg.Dots) {
@@ -216,7 +222,11 @@ func doLink(source string, target string) bool {
 	if targetType == notExists && (sourceType == isDirectory || sourceType == isFile) {
 		err := os.Symlink(source, target)
 		printMessage("Linking", source, target)
-		if err != nil {
+		if err == nil {
+			if !slices.Contains(dotsData, target) {
+				dotsData = append(dotsData, target)
+			}
+		} else {
 			printError("Error linking", target)
 		}
 		return err == nil

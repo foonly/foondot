@@ -1,8 +1,12 @@
 package main
 
 import (
+	"encoding/json"
+	"fmt"
 	"os"
+	"path"
 
+	"github.com/adrg/xdg"
 	"github.com/pelletier/go-toml/v2"
 )
 
@@ -23,6 +27,8 @@ type Config struct {
 	Color    bool   `toml:"color"    comment:"Enable color output"`
 	Dots     []Item `toml:"dots"     comment:"A dot entry representing a symlink, 'source' is relative to 'dotfiles'\nand 'target' shall be relative to $HOME directory or absolute.\nExample:\ndots = [{source = 'bash/bashrc', target = '.bashrc'}]"`
 }
+
+var dotsData = []string{}
 
 /**
  * Reads the config file.
@@ -69,4 +75,46 @@ func createDefaultConfig(configFile string) {
 		printError("Error writing default config", configFile, err.Error())
 		os.Exit(4)
 	}
+}
+
+func readDotsData() {
+	filename := getDataFilename(dotsDataFileName)
+	fmt.Println(filename)
+	data, err := os.ReadFile(filename)
+	if err != nil {
+		return
+	}
+	err = json.Unmarshal([]byte(data), &dotsData)
+	if err != nil {
+		printError("Error reading JSON file", filename, err.Error())
+		os.Exit(2)
+	}
+}
+
+func writeDotsData() {
+	filename := getDataFilename(dotsDataFileName)
+	data, err := json.Marshal(dotsData)
+	if err != nil {
+		printError("Error marshaling dots data", err.Error())
+		os.Exit(3)
+	}
+
+	err = os.WriteFile(filename, data, 0644)
+	if err != nil {
+		printError("Error writing dots data", filename, err.Error())
+		os.Exit(4)
+	}
+}
+
+func getDataFilename(filename string) string {
+	dataFolder := path.Join(xdg.DataHome, dataFolderName)
+	if getType(dataFolder) == notExists {
+		err := os.MkdirAll(dataFolder, 0755)
+		if err != nil {
+			printError("Error creating data folder", dataFolder, err.Error())
+			os.Exit(5)
+		}
+	}
+
+	return path.Join(dataFolder, filename)
 }
