@@ -30,9 +30,13 @@ type Config struct {
 var dotsData = []string{}
 
 /**
- * Reads the config file.
+ * Reads the config file from the given path.
+ *
+ * If the file does not exist, the program exits.
+ * If the file is not a valid TOML file, the program exits.
  */
 func readConfig(configFile string) Config {
+
 	data, err := os.ReadFile(configFile)
 	if err != nil {
 		printError("Config file not found in", configFile)
