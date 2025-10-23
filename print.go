@@ -6,7 +6,11 @@ import (
 )
 
 /**
- * Prints a message to the console.
+ * Prints a formatted message to the console.
+ * If three or more strings are provided, prints in the format: "<prefix>: <value> => <result>".
+ * If two strings are provided, prints in the format: "<prefix>: <value>".
+ * If one string is provided, prints just that string.
+ * If the global 'color' variable is true, applies color formatting to the output.
  */
 func printMessage(text ...string) {
 	if len(text) >= 3 {
@@ -21,11 +25,17 @@ func printMessage(text ...string) {
 		} else {
 			fmt.Fprintf(os.Stdout, "%s: %s\n", text[0], text[1])
 		}
+	} else {
+		fmt.Fprintf(os.Stdout, "%s\n", text[0])
 	}
 }
 
 /**
- * Prints an error message to the console.
+ * Prints a formatted error message to the standard error stream.
+ * If three or more strings are provided, prints in the format: "<prefix>: <value>\n<error message>".
+ * If two strings are provided, prints in the format: "<prefix>: <value>".
+ * If one string is provided, prints just that string.
+ * If the global 'color' variable is true, applies color formatting to the output.
  */
 func printError(text ...string) {
 	if len(text) >= 3 {
