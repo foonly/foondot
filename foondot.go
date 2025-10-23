@@ -76,11 +76,12 @@ func main() {
 
 	readDotsData()
 
+	dots := filterDots(cfg.Dots)
+
 	numberLinked := 0
-	for _, element := range cfg.Dots {
+	for _, element := range filterDots(dots) {
 		if handleDot(element, cfg.Dotfiles, *force) {
 			numberLinked++
-
 		}
 	}
 
@@ -90,11 +91,31 @@ func main() {
 	writeDotsData()
 	if numberLinked == 0 {
 		fmt.Fprintf(os.Stdout, "No new dotfiles linked.\n")
-	} else if numberLinked == len(cfg.Dots) {
-		fmt.Fprintf(os.Stdout, "All %d dotfiles linked.\n", len(cfg.Dots))
+	} else if numberLinked == len(dots) {
+		fmt.Fprintf(os.Stdout, "All %d dotfiles linked.\n", len(dots))
 	} else {
-		fmt.Fprintf(os.Stdout, "%d of %d dotfiles linked.\n", numberLinked, len(cfg.Dots))
+		fmt.Fprintf(os.Stdout, "%d of %d dotfiles linked.\n", numberLinked, len(dots))
 	}
+}
+
+/**
+ * Filters a list of dotfile items based on hostname. If a dotfile item has a
+ * hostname defined, it is included in the filtered list only if the current
+ * hostname is present in the dotfile's hostname list. If a dotfile item does
+ * not have a hostname defined, it is always included in the filtered list.
+ *
+ * @param dots A slice of Item structs representing the dotfile items to filter.
+ * @return A new slice of Item structs containing only the dotfile items that
+ *         match the hostname criteria.
+ */
+func filterDots(dots []Item) []Item {
+	newDots := []Item{}
+	for _, dot := range dots {
+		if len(dot.Hostname) == 0 || slices.Contains(dot.Hostname, hostname) {
+			newDots = append(newDots, dot)
+		}
+	}
+	return newDots
 }
 
 /**
@@ -107,11 +128,6 @@ func main() {
 * @return True if the link was successfully created, false otherwise.
  */
 func handleDot(item Item, dotfiles string, force bool) bool {
-
-	// Skip if hostname is defined and not matching a record in the array.
-	if len(item.Hostname) > 0 && !slices.Contains(item.Hostname, hostname) {
-		return false
-	}
 
 	source := path.Join(xdg.Home, dotfiles, item.Source)
 	target := path.Join(xdg.Home, item.Target)

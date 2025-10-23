@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
 	"path"
 
@@ -79,7 +78,6 @@ func createDefaultConfig(configFile string) {
 
 func readDotsData() {
 	filename := getDataFilename(dotsDataFileName)
-	fmt.Println(filename)
 	data, err := os.ReadFile(filename)
 	if err != nil {
 		return
