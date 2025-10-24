@@ -1,12 +1,22 @@
-package main
+package config
 
 import (
 	"encoding/json"
 	"os"
 	"path"
 
+	"foonly.dev/foondot/internal/utils"
 	"github.com/adrg/xdg"
 	"github.com/pelletier/go-toml/v2"
+)
+
+/**
+ * Constants
+ */
+const (
+	DefaultConfigFileName = "foondot.toml"
+	dataFolderName        = "foondot"
+	dotsDataFileName      = "dots.json"
 )
 
 /**
@@ -37,7 +47,9 @@ type Config struct {
 	Dots     []Item `toml:"dots"     comment:"A dot entry representing a symlink, 'source' is relative to 'dotfiles'\nand 'target' shall be relative to $HOME directory or absolute.\nExample:\ndots = [{source = 'bash/bashrc', target = '.bashrc'}]"`
 }
 
-var dotsData = []string{}
+var Hostname = "unknown"
+var Version = "undefined"
+var DotsData = []string{}
 
 /**
  * Reads the configuration from the specified TOML config file.
@@ -46,11 +58,11 @@ var dotsData = []string{}
  * @param configFile The path to the configuration file.
  * @return Config The parsed configuration struct.
  */
-func readConfig(configFile string) Config {
+func ReadConfig(configFile string) Config {
 
 	data, err := os.ReadFile(configFile)
 	if err != nil {
-		printError("Config file not found in", configFile)
+		utils.PrintError("Config file not found in", configFile)
 		os.Exit(1)
 	}
 
@@ -59,7 +71,7 @@ func readConfig(configFile string) Config {
 	// Reading from a TOML file
 	err = toml.Unmarshal([]byte(data), &cfg)
 	if err != nil {
-		printError("Error reading TOML file", configFile, err.Error())
+		utils.PrintError("Error reading TOML file", configFile, err.Error())
 		os.Exit(2)
 	}
 
@@ -72,24 +84,24 @@ func readConfig(configFile string) Config {
  *
  * @param configFile The path where the default configuration file will be created.
  */
-func createDefaultConfig(configFile string) {
+func CreateDefaultConfig(configFile string) {
 	defaultConfig := Config{
 		Dotfiles: "dotfiles",
 		Color:    false,
 		Dots:     []Item{},
 	}
 
-	printMessage("Creating config file in", configFile)
+	utils.PrintMessage("Creating config file in", configFile)
 
 	data, err := toml.Marshal(defaultConfig)
 	if err != nil {
-		printError("Error marshaling default config", err.Error())
+		utils.PrintError("Error marshaling default config", err.Error())
 		os.Exit(3)
 	}
 
 	err = os.WriteFile(configFile, data, 0644)
 	if err != nil {
-		printError("Error writing default config", configFile, err.Error())
+		utils.PrintError("Error writing default config", configFile, err.Error())
 		os.Exit(4)
 	}
 }
@@ -101,15 +113,15 @@ func createDefaultConfig(configFile string) {
  *
  * The dots data is unmarshaled into the global variable dotsData.
  */
-func readDotsData() {
+func ReadDotsData() {
 	filename := getDataFilename(dotsDataFileName)
 	data, err := os.ReadFile(filename)
 	if err != nil {
 		return
 	}
-	err = json.Unmarshal([]byte(data), &dotsData)
+	err = json.Unmarshal([]byte(data), &DotsData)
 	if err != nil {
-		printError("Error reading JSON file", filename, err.Error())
+		utils.PrintError("Error reading JSON file", filename, err.Error())
 		os.Exit(2)
 	}
 }
@@ -120,17 +132,17 @@ func readDotsData() {
  *
  * The dots data is marshaled from the global variable dotsData.
  */
-func writeDotsData() {
+func WriteDotsData() {
 	filename := getDataFilename(dotsDataFileName)
-	data, err := json.Marshal(dotsData)
+	data, err := json.Marshal(DotsData)
 	if err != nil {
-		printError("Error marshaling dots data", err.Error())
+		utils.PrintError("Error marshaling dots data", err.Error())
 		os.Exit(3)
 	}
 
 	err = os.WriteFile(filename, data, 0644)
 	if err != nil {
-		printError("Error writing dots data", filename, err.Error())
+		utils.PrintError("Error writing dots data", filename, err.Error())
 		os.Exit(4)
 	}
 }
@@ -144,10 +156,10 @@ func writeDotsData() {
  */
 func getDataFilename(filename string) string {
 	dataFolder := path.Join(xdg.DataHome, dataFolderName)
-	if getType(dataFolder) == notExists {
+	if utils.GetType(dataFolder) == utils.NotExists {
 		err := os.MkdirAll(dataFolder, 0755)
 		if err != nil {
-			printError("Error creating data folder", dataFolder, err.Error())
+			utils.PrintError("Error creating data folder", dataFolder, err.Error())
 			os.Exit(5)
 		}
 	}

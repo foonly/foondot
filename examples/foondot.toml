@@ -1,4 +1,4 @@
-# Place this file in your XDG_CONFIG folder (.config), and rename it to foondot.toml
+# Place this file in your XDG_CONFIG folder (.config)
 
 # Path to your dotfiles relative to your $HOME directory
 dotfiles = "dotfiles"
