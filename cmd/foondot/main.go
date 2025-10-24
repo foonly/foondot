@@ -54,10 +54,11 @@ func Execute() {
 		}
 	}
 
+	config.WriteDotsData()
+
 	if *force {
 		fmt.Fprintf(os.Stdout, "Force mode enabled\n")
 	}
-	config.WriteDotsData()
 	if numberLinked == 0 {
 		fmt.Fprintf(os.Stdout, "No new dotfiles linked.\n")
 	} else if numberLinked == len(dotFiles) {

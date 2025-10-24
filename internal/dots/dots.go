@@ -50,6 +50,25 @@ func HandleDot(item config.Item, dotfiles string, force bool) bool {
 	return doLink(source, target)
 }
 
+func CleanTargets(dots []config.Item) {
+	var targets []string
+	for _, item := range dots {
+		targets = append(targets, path.Join(xdg.Home, item.Target))
+	}
+
+	for index, target := range config.DotsData {
+		if utils.GetType(target) != utils.IsSymlink {
+			// Target is not a symlink, remove from array.
+			config.DotsData = slices.Delete(config.DotsData, index, 1)
+		} else if !slices.Contains(targets, target) {
+			// Target is a symlink and doesn't exists in the list of targets.
+			utils.PrintMessage("Removing link", target)
+			os.Remove(target)
+			config.DotsData = slices.Delete(config.DotsData, index, 1)
+		}
+	}
+}
+
 /**
  * Prepares the target location for a symlink. This includes creating parent
  * directories, removing existing symlinks (if force is enabled), and moving
