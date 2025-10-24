@@ -9,11 +9,11 @@ import (
  * File types.
  */
 const (
-	IsFailed    = iota
-	NotExists   = iota
-	IsSymlink   = iota
-	IsDirectory = iota
-	IsFile      = iota
+	IsFailed = iota
+	NotExists
+	IsSymlink
+	IsDirectory
+	IsFile
 )
 
 /**
