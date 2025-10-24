@@ -1,4 +1,4 @@
-package main
+package dots
 
 import (
 	"os"
@@ -6,6 +6,8 @@ import (
 	"slices"
 	"strconv"
 
+	"foonly.dev/foondot/internal/config"
+	"foonly.dev/foondot/internal/utils"
 	"github.com/adrg/xdg"
 )
 
@@ -19,10 +21,10 @@ import (
  * @return A new slice of Item structs containing only the dotfile items that
  *         match the hostname criteria.
  */
-func filterDots(dots []Item) []Item {
-	newDots := []Item{}
+func FilterDots(dots []config.Item) []config.Item {
+	newDots := []config.Item{}
 	for _, dot := range dots {
-		if len(dot.Hostname) == 0 || slices.Contains(dot.Hostname, hostname) {
+		if len(dot.Hostname) == 0 || slices.Contains(dot.Hostname, config.Hostname) {
 			newDots = append(newDots, dot)
 		}
 	}
@@ -38,7 +40,7 @@ func filterDots(dots []Item) []Item {
 * @param force Whether to force relinking and move existing files.
 * @return True if the link was successfully created, false otherwise.
  */
-func handleDot(item Item, dotfiles string, force bool) bool {
+func HandleDot(item config.Item, dotfiles string, force bool) bool {
 
 	source := path.Join(xdg.Home, dotfiles, item.Source)
 	target := path.Join(xdg.Home, item.Target)
@@ -59,53 +61,53 @@ func handleDot(item Item, dotfiles string, force bool) bool {
  */
 func prepareTargetSource(target string, source string, force bool) {
 	targetDir := path.Dir(target)
-	if getType(targetDir) == notExists {
+	if utils.GetType(targetDir) == utils.NotExists {
 		err := os.MkdirAll(targetDir, os.ModePerm)
 		if err == nil {
 			// No error means directory was created.
-			printMessage("Created directory", targetDir)
+			utils.PrintMessage("Created directory", targetDir)
 		}
 	}
 
-	targetType := getType(target)
+	targetType := utils.GetType(target)
 
-	if targetType == isSymlink && force {
+	if targetType == utils.IsSymlink && force {
 		// Remove target if it's a symlink.
 		os.Remove(target)
 	}
-	if targetType == isDirectory || targetType == isFile {
+	if targetType == utils.IsDirectory || targetType == utils.IsFile {
 		// Target is not a symlink.
 		isDirFile := "file"
-		if targetType == isDirectory {
+		if targetType == utils.IsDirectory {
 			isDirFile = "directory"
 		}
-		printError("Target is a "+isDirFile, target)
-		sourceType := getType(source)
+		utils.PrintError("Target is a "+isDirFile, target)
+		sourceType := utils.GetType(source)
 
-		if sourceType == notExists {
+		if sourceType == utils.NotExists {
 			sourceDir := path.Dir(source)
-			if getType(sourceDir) == notExists {
+			if utils.GetType(sourceDir) == utils.NotExists {
 				err := os.MkdirAll(sourceDir, os.ModePerm)
 				if err == nil {
 					// No error means directory was created.
-					printMessage("Created directory", sourceDir)
+					utils.PrintMessage("Created directory", sourceDir)
 				} else {
-					printError("Couldn't create directory", sourceDir)
+					utils.PrintError("Couldn't create directory", sourceDir)
 				}
 			}
 
 			moveErr := os.Rename(target, source)
 			if moveErr == nil {
-				printMessage("Moving before linking", target, source)
+				utils.PrintMessage("Moving before linking", target, source)
 			}
 		} else if force {
-			printMessage("force", source)
+			utils.PrintMessage("force", source)
 			sourceConflict := source + ".conflict"
 			count := 0
 			for {
 				// Find an available filename
-				conflictType := getType(sourceConflict)
-				if conflictType == notExists {
+				conflictType := utils.GetType(sourceConflict)
+				if conflictType == utils.NotExists {
 					break
 				}
 				count++
@@ -114,12 +116,12 @@ func prepareTargetSource(target string, source string, force bool) {
 
 			err := os.Rename(target, sourceConflict)
 			if err == nil {
-				printMessage("Both source and target exist, forcing move out of the way", target, sourceConflict)
+				utils.PrintMessage("Both source and target exist, forcing move out of the way", target, sourceConflict)
 			} else {
-				printError("Couldn't backup target, skipping", target)
+				utils.PrintError("Couldn't backup target, skipping", target)
 			}
 		} else {
-			printError("Both source and target exist. Skipping", source, "Use -f to override.")
+			utils.PrintError("Both source and target exist. Skipping", source, "Use -f to override.")
 		}
 	}
 }
@@ -134,27 +136,27 @@ func prepareTargetSource(target string, source string, force bool) {
  * @return True if the link was successfully created, false otherwise.
  */
 func doLink(source string, target string) bool {
-	sourceType := getType(source)
-	targetType := getType(target)
+	sourceType := utils.GetType(source)
+	targetType := utils.GetType(target)
 
-	if sourceType == notExists {
-		printError("Source does not exist", source)
+	if sourceType == utils.NotExists {
+		utils.PrintError("Source does not exist", source)
 		return false
 	}
-	if sourceType == isSymlink {
-		printError("Source is a symlink", source)
+	if sourceType == utils.IsSymlink {
+		utils.PrintError("Source is a symlink", source)
 		return false
 	}
 
-	if targetType == notExists && (sourceType == isDirectory || sourceType == isFile) {
+	if targetType == utils.NotExists && (sourceType == utils.IsDirectory || sourceType == utils.IsFile) {
 		err := os.Symlink(source, target)
-		printMessage("Linking", source, target)
+		utils.PrintMessage("Linking", source, target)
 		if err == nil {
-			if !slices.Contains(dotsData, target) {
-				dotsData = append(dotsData, target)
+			if !slices.Contains(config.DotsData, target) {
+				config.DotsData = append(config.DotsData, target)
 			}
 		} else {
-			printError("Error linking", target)
+			utils.PrintError("Error linking", target)
 		}
 		return err == nil
 	}

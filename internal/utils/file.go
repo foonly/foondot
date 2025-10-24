@@ -1,8 +1,19 @@
-package main
+package utils
 
 import (
 	"errors"
 	"os"
+)
+
+/**
+ * File types.
+ */
+const (
+	IsFailed    = iota
+	NotExists   = iota
+	IsSymlink   = iota
+	IsDirectory = iota
+	IsFile      = iota
 )
 
 /**
@@ -11,18 +22,18 @@ import (
  * @param fileName The path to the file or directory.
  * @return An integer representing the file type (notExists, isSymlink, isDirectory, isFile, isFailed).
  */
-func getType(fileName string) int {
+func GetType(fileName string) int {
 	stat, err := os.Lstat(fileName)
 	if errors.Is(err, os.ErrNotExist) {
-		return notExists
+		return NotExists
 	} else if err != nil {
-		return isFailed
+		return IsFailed
 	}
 	if stat.Mode()&os.ModeSymlink == os.ModeSymlink {
-		return isSymlink
+		return IsSymlink
 	}
 	if stat.Mode()&os.ModeDir == os.ModeDir {
-		return isDirectory
+		return IsDirectory
 	}
-	return isFile
+	return IsFile
 }

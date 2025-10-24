@@ -3,7 +3,7 @@ DESTDIR :=
 PREFIX := /usr/local
 VERSION := $(shell git describe --tags --always --long --dirty)
 
-foondot: foondot.go
+foondot: main.go
 	go build -v -ldflags="-X main.version=${VERSION}"
 
 .PHONY: clean
