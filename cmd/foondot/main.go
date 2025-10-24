@@ -54,6 +54,8 @@ func Execute() {
 		}
 	}
 
+	dots.CleanTargets(dotFiles)
+
 	config.WriteDotsData()
 
 	if *force {
