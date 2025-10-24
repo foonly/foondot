@@ -74,7 +74,10 @@ func CleanTargets(dots []config.Item) {
 		} else if !slices.Contains(targets, target) {
 			// Target is a symlink and doesn't exist in the list of targets.
 			utils.PrintMessage("Removing link", target)
-			os.Remove(target)
+			err := os.Remove(target)
+			if err != nil {
+				utils.PrintError("Failed to remove link", target, err.Error())
+			}
 			return true
 		}
 		return false
