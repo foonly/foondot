@@ -77,6 +77,7 @@ func CleanTargets(dots []config.Item) {
 			err := os.Remove(target)
 			if err != nil {
 				utils.PrintError("Failed to remove link", target, err.Error())
+				return false
 			}
 			return true
 		}
