@@ -69,10 +69,10 @@ func CleanTargets(dots []config.Item) {
 
 	config.DotsData = slices.DeleteFunc(config.DotsData, func(target string) bool {
 		if utils.GetType(target) != utils.IsSymlink {
-			// Target is not a symlink, remove from array.
+			// Target is not a symlink, remove from list.
 			return true
 		} else if !slices.Contains(targets, target) {
-			// Target is a symlink and doesn't exists in the list of targets.
+			// Target is a symlink and doesn't exist in the list of targets.
 			utils.PrintMessage("Removing link", target)
 			os.Remove(target)
 			return true
