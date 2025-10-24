@@ -51,6 +51,42 @@ func HandleDot(item config.Item, dotfiles string, force bool) bool {
 }
 
 /**
+ * Cleans up target symlinks that are no longer valid or needed.
+ * Iterates through the list of tracked dotfile targets (config.DotsData),
+ * and for each target:
+ *   - If the target is not a symlink, it is removed from the tracking array.
+ *   - If the target is a symlink but does not exist in the current list of
+ *     dotfile targets, the symlink is removed from the filesystem and from
+ *     the tracking array.
+ *
+ * @param dots A slice of Item structs representing the current dotfile items.
+ */
+func CleanTargets(dots []config.Item) {
+	var targets []string
+	for _, item := range dots {
+		targets = append(targets, path.Join(xdg.Home, item.Target))
+	}
+
+	config.DotsData = slices.DeleteFunc(config.DotsData, func(target string) bool {
+		if utils.GetType(target) != utils.IsSymlink {
+			// Target is not a symlink, remove from list.
+			return true
+		} else if !slices.Contains(targets, target) {
+			// Target is a symlink and doesn't exist in the list of targets.
+			utils.PrintMessage("Removing link", target)
+			err := os.Remove(target)
+			if err != nil {
+				utils.PrintError("Failed to remove link", target, err.Error())
+				return false
+			}
+			return true
+		}
+		return false
+	})
+
+}
+
+/**
  * Prepares the target location for a symlink. This includes creating parent
  * directories, removing existing symlinks (if force is enabled), and moving
  * existing files or directories out of the way to avoid conflicts.
