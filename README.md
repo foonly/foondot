@@ -1,7 +1,7 @@
 # Foondot
 
 Foondot is a utility that manages symlinks from a local repository, linking files and folders according to a configuration file. Foondot doesn't handle any of the syncing of the repository. That can be handled by git or a utility like syncthing or dropbox.
-It is written in Go and thus statically linked, requiring no special dependencies.
+It is written in Go and statically linked, requiring no special dependencies.
 
 ## Configuration
 
@@ -43,7 +43,7 @@ If a file or directory already exists at the `target` location, Foondot will mov
 
 ### Removing Symlinks
 
-Currently, Foondot does not automatically remove symlinks that are no longer defined in the configuration file. This feature is planned for a future release.
+Foondot tries to clean up links when they are removed from the config or no longer active for your hostname. It does this by keeping track of all the links it has written.
 
 ## Usage
 
@@ -83,7 +83,3 @@ Foondot provides informative error messages in case of issues.
 - **Missing Configuration File:** If the main configuration file is missing, an empty one will be generated in `$HOME/.config/foondot.toml`.
 - **Faulty Configuration:** If there are errors in the configuration file (e.g., invalid TOML syntax, missing required fields), Foondot will display an error message explaining the problem.
 - **Permission Errors:** Foondot may encounter permission errors when creating symlinks. Ensure that you have the necessary permissions to create symlinks in the target directories.
-
-## Planned Features
-
-- Automatically remove symlinks that are no longer defined in the configuration file.
