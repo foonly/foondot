@@ -13,3 +13,6 @@ clean:
 .PHONY: install
 install:
 	install -Dm755 ${BIN} $(DESTDIR)$(PREFIX)/bin/${BIN}
+
+.PHONY: build
+build: clean foondot
