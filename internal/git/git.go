@@ -54,7 +54,7 @@ func Sync(cfg config.Config) error {
 	}
 
 	// 3. Generate a human-readable commit message based on the staged changes.
-	message := generateCommitMessage(changes)
+	message := generateCommitMessage(dotfilesDir, changes)
 	utils.PrintMessage("Committing:", message)
 	if err := commit(dotfilesDir, message); err != nil {
 		return fmt.Errorf("failed to commit: %w", err)
@@ -145,42 +145,59 @@ func push(dir string) error {
 	return cmd.Run()
 }
 
+// hasInHEAD checks if a file or directory exists in the HEAD commit.
+func hasInHEAD(dir, key string) bool {
+	cmd := exec.Command("git", "ls-tree", "HEAD", key)
+	cmd.Dir = dir
+	out, _ := cmd.Output()
+	return len(strings.TrimSpace(string(out))) > 0
+}
+
+// hasInIndex checks if a file or directory exists in the git index.
+func hasInIndex(dir, key string) bool {
+	cmd := exec.Command("git", "ls-files", "--", key)
+	cmd.Dir = dir
+	out, _ := cmd.Output()
+	return len(strings.TrimSpace(string(out))) > 0
+}
+
 // generateCommitMessage creates a smart message based on the changed files and directories.
-func generateCommitMessage(changes []Change) string {
+func generateCommitMessage(dir string, changes []Change) string {
 	added := make(map[string]bool)
 	updated := make(map[string]bool)
 	removed := make(map[string]bool)
+
+	keys := make(map[string]bool)
 
 	for _, c := range changes {
 		// Handle renames (Status starts with R). Format is usually "R  old -> new"
 		if len(c.Status) > 0 && c.Status[0] == 'R' {
 			parts := strings.Split(c.Path, " -> ")
 			if len(parts) == 2 {
-				// Add the source as removed
 				oldPath := strings.Trim(parts[0], "\"")
-				removed[strings.Split(oldPath, "/")[0]] = true
+				keys[strings.Split(oldPath, "/")[0]] = true
 
-				// Add the destination as added
 				newPath := strings.Split(strings.Trim(parts[1], "\""), "/")[0]
-				added[newPath] = true
+				keys[newPath] = true
 				continue
 			}
 		}
 
 		// Group changes by the top-level directory or file name.
 		parts := strings.Split(c.Path, "/")
-		key := parts[0]
+		keys[parts[0]] = true
+	}
 
-		// After git add -A, we check the index status (first character of porcelain status).
-		if len(c.Status) > 0 {
-			switch c.Status[0] {
-			case 'A', '?':
-				added[key] = true
-			case 'D':
-				removed[key] = true
-			default:
-				updated[key] = true
-			}
+	for key := range keys {
+		inHEAD := hasInHEAD(dir, key)
+		inIndex := hasInIndex(dir, key)
+
+		if inHEAD && inIndex {
+			updated[key] = true
+		} else if inHEAD && !inIndex {
+			removed[key] = true
+		} else if !inHEAD && inIndex {
+			added[key] = true
 		}
 	}
 
