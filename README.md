@@ -1,7 +1,8 @@
 # Foondot
 
-Foondot is a utility that manages symlinks from a local repository, linking files and folders according to a configuration file. Foondot doesn't handle any of the syncing of the repository. That can be handled by git or a utility like syncthing or dropbox.
-It is written in Go and statically linked, requiring no special dependencies.
+Foondot is a utility that manages symlinks from a local repository, linking files and folders according to a configuration file. It also features a built-in sync command to automatically pull, commit, and push changes using Git.
+
+Foondot is written in Go and statically linked, requiring no special dependencies.
 
 ## Configuration
 
@@ -33,47 +34,56 @@ dots = [
   - `target`: (String, required) The target path for the symlink. This can be either relative to your `$HOME` directory or an absolute path.
   - `hostname`: (Array of Strings, optional) An array of hostnames where this dot entry should be applied. If not specified, the entry will be applied to all hosts.
 
-## Symlink Management
+## Commands
 
-Foondot creates symlinks from the `source` files/directories in your `dotfiles` directory to the `target` locations specified in the configuration file.
+### `link` (default)
 
-### Handling Conflicts
+Creates symlinks from the `source` files/directories in your `dotfiles` directory to the `target` locations specified in the configuration file.
 
-If a file or directory already exists at the `target` location, Foondot will move the existing file/directory into your `dotfiles` directory before linking. If the source file/directory also exists, it appends `.conflict` to the name. For example, if `.config/program` already exists, it will be moved to `dotfiles/program.conflict`.
+- **Handling Conflicts**: If a file or directory already exists at the `target` location, Foondot will move the existing file/directory into your `dotfiles` directory before linking. If the source file/directory also exists, it appends `.conflict` to the name. For example, if `.config/program` already exists, it will be moved to `dotfiles/program.conflict`.
+- **Removing Symlinks**: Foondot tries to clean up links when they are removed from the config or no longer active for your hostname. It does this by keeping track of all the links it has written.
 
-### Removing Symlinks
+### `sync`
 
-Foondot tries to clean up links when they are removed from the config or no longer active for your hostname. It does this by keeping track of all the links it has written.
+Automatically synchronizes your dotfiles repository using Git. It follows a streamlined workflow:
+
+1.  **Pull**: Performs a `git pull --rebase --autostash` to integrate remote changes while preserving local modifications.
+2.  **Stage**: Automatically stages all changes in the dotfiles directory (`git add -A`).
+3.  **Commit**: Generates a "smart" commit message based on the changed top-level folders and files (e.g., `Updated sway and mako, Added alacritty`).
+4.  **Push**: Pushes the local commits to the remote tracking branch.
+
+If a merge conflict occurs during the sync process, Foondot will abort and notify you to resolve it manually.
 
 ## Usage
 
-Foondot is run from the command line.
+Foondot uses a subcommand structure. Running it without a command defaults to `link`.
 
 ### Command-Line Options:
 
-- `-f` or `--force`: Force relinking and move conflicting files.
-- `-c` or `--config`: Specify the location of an alternate configuration file.
-- `-v` or `--version`: Show the version and hostname.
-- `-cc` or `--color`: Enable color output.
+- `-f`: Force relinking and move conflicting files (applies to `link` command).
+- `-c <path>`: Specify the location of an alternate configuration file.
+- `-v`: Show the version and hostname.
+- `-cc`: Enable color output.
 
 ### Examples:
 
-- Run Foondot with the default configuration file:
+- **Link dotfiles** (default behavior):
 
   ```bash
   foondot
+  # or explicitly
+  foondot link
   ```
 
-- Run Foondot with a specific configuration file:
+- **Sync dotfiles with Git**:
 
   ```bash
-  foondot -c /path/to/myconfig.toml
+  foondot sync
   ```
 
-- Run Foondot with force relinking:
-
+- **Force relink with a specific config**:
   ```bash
-  foondot -f
+  foondot -f -c /path/to/myconfig.toml link
   ```
 
 ## Error Handling
@@ -82,4 +92,4 @@ Foondot provides informative error messages in case of issues.
 
 - **Missing Configuration File:** If the main configuration file is missing, an empty one will be generated in `$HOME/.config/foondot.toml`.
 - **Faulty Configuration:** If there are errors in the configuration file (e.g., invalid TOML syntax, missing required fields), Foondot will display an error message explaining the problem.
-- **Permission Errors:** Foondot may encounter permission errors when creating symlinks. Ensure that you have the necessary permissions to create symlinks in the target directories.
+- **Git Errors:** The `sync` command will report errors if the directory is not a Git repository or if network/conflict issues occur during push/pull.
