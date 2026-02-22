@@ -147,9 +147,25 @@ func push(dir string) error {
 
 // hasInHEAD checks if a file or directory exists in the HEAD commit.
 func hasInHEAD(dir, key string) bool {
-	cmd := exec.Command("git", "ls-tree", "HEAD", key)
+	cmd := exec.Command("git", "ls-tree", "HEAD", "--", key)
 	cmd.Dir = dir
-	out, _ := cmd.Output()
+	out, err := cmd.Output()
+	if err != nil {
+		// If HEAD does not exist yet (e.g. initial commit), git will report an unknown
+		// revision. Treat that specific case as "not in HEAD" without noise.
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			stderr := string(exitErr.Stderr)
+			if strings.Contains(stderr, "unknown revision") && strings.Contains(stderr, "HEAD") {
+				return false
+			}
+			// For other git failures, surface a diagnostic but still return false to match
+			// the existing boolean-only API.
+			fmt.Fprintf(os.Stderr, "git ls-tree HEAD -- %s failed: %s\n", key, strings.TrimSpace(stderr))
+		} else {
+			fmt.Fprintf(os.Stderr, "git ls-tree HEAD -- %s error: %v\n", key, err)
+		}
+		return false
+	}
 	return len(strings.TrimSpace(string(out))) > 0
 }
 
@@ -157,7 +173,16 @@ func hasInHEAD(dir, key string) bool {
 func hasInIndex(dir, key string) bool {
 	cmd := exec.Command("git", "ls-files", "--", key)
 	cmd.Dir = dir
-	out, _ := cmd.Output()
+	out, err := cmd.Output()
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			stderr := string(exitErr.Stderr)
+			fmt.Fprintf(os.Stderr, "git ls-files -- %s failed: %s\n", key, strings.TrimSpace(stderr))
+		} else {
+			fmt.Fprintf(os.Stderr, "git ls-files -- %s error: %v\n", key, err)
+		}
+		return false
+	}
 	return len(strings.TrimSpace(string(out))) > 0
 }
 
