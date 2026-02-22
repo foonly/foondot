@@ -155,7 +155,7 @@ func hasInHEAD(dir, key string) bool {
 
 // hasInIndex checks if a file or directory exists in the git index.
 func hasInIndex(dir, key string) bool {
-	cmd := exec.Command("git", "ls-files", key)
+	cmd := exec.Command("git", "ls-files", "--", key)
 	cmd.Dir = dir
 	out, _ := cmd.Output()
 	return len(strings.TrimSpace(string(out))) > 0
