@@ -63,6 +63,7 @@ func HandleDot(item config.Item, dotfiles string, force bool) bool {
  */
 func CleanTargets(dots []config.Item) {
 	var targets []string
+	// Create a list of targets from defined dots.
 	for _, item := range dots {
 		targets = append(targets, path.Join(xdg.Home, item.Target))
 	}
