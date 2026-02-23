@@ -13,15 +13,15 @@ import (
 	"github.com/adrg/xdg"
 )
 
-// Change represents a change in the git repository.
+// Change represents a file modification, addition, deletion, or rename within the git repository.
 type Change struct {
 	Status string // M, A, D, R, etc.
 	Path   string // Path relative to repo root
 }
 
-// Sync handles the automatic git sync process for the dotfiles directory.
-// It performs a pull with rebase, stages all changes, creates a smart commit message,
-// and pushes the result back to the remote repository.
+// Sync orchestrates the automatic synchronization process for the dotfiles directory.
+// It pulls remote changes with rebase, stages local modifications, creates a contextual commit message,
+// and pushes the resulting commit back to the remote repository.
 func Sync(cfg config.Config) error {
 	dotfilesDir := path.Join(xdg.Home, cfg.Dotfiles)
 
@@ -55,7 +55,7 @@ func Sync(cfg config.Config) error {
 
 	// 3. Generate a human-readable commit message based on the staged changes.
 	message := generateCommitMessage(dotfilesDir, changes)
-	utils.PrintMessage("Committing:", message)
+	utils.PrintMessage("Committing", message)
 	if err := commit(dotfilesDir, message); err != nil {
 		return fmt.Errorf("failed to commit: %w", err)
 	}
@@ -70,7 +70,7 @@ func Sync(cfg config.Config) error {
 	return nil
 }
 
-// isRepo checks if the given path is inside a git repository.
+// isRepo determines whether the specified directory path resides within a valid git work tree.
 func isRepo(dir string) bool {
 	cmd := exec.Command("git", "rev-parse", "--is-inside-work-tree")
 	cmd.Dir = dir
@@ -78,7 +78,7 @@ func isRepo(dir string) bool {
 	return err == nil
 }
 
-// getChanges returns a list of changed files using git status --porcelain.
+// getChanges retrieves and parses a list of repository file changes by executing 'git status --porcelain'.
 func getChanges(dir string) ([]Change, error) {
 	cmd := exec.Command("git", "status", "--porcelain")
 	cmd.Dir = dir
@@ -112,7 +112,7 @@ func getChanges(dir string) ([]Change, error) {
 	return changes, nil
 }
 
-// pull performs a git pull --rebase with --autostash.
+// pull fetches and integrates remote changes into the local branch using rebase and autostash to avoid merge commits.
 func pull(dir string) error {
 	utils.PrintMessage("Pulling changes...")
 	cmd := exec.Command("git", "pull", "--rebase", "--autostash")
@@ -122,21 +122,21 @@ func pull(dir string) error {
 	return cmd.Run()
 }
 
-// stageAll runs git add -A to stage all changes.
+// stageAll stages all modifications, additions, and deletions in the working directory using 'git add -A'.
 func stageAll(dir string) error {
 	cmd := exec.Command("git", "add", "-A")
 	cmd.Dir = dir
 	return cmd.Run()
 }
 
-// commit runs git commit -m <message> with the provided message.
+// commit creates a new git commit containing the currently staged changes, utilizing the provided message.
 func commit(dir, message string) error {
 	cmd := exec.Command("git", "commit", "-m", message)
 	cmd.Dir = dir
 	return cmd.Run()
 }
 
-// push runs git push to send changes to the remote tracking branch.
+// push uploads local repository commits to the configured upstream remote tracking branch.
 func push(dir string) error {
 	cmd := exec.Command("git", "push")
 	cmd.Dir = dir
@@ -145,7 +145,7 @@ func push(dir string) error {
 	return cmd.Run()
 }
 
-// hasInHEAD checks if a file or directory exists in the HEAD commit.
+// hasInHEAD verifies if a specific file or directory (key) exists in the latest local commit (HEAD).
 func hasInHEAD(dir, key string) bool {
 	cmd := exec.Command("git", "ls-tree", "HEAD", "--", key)
 	cmd.Dir = dir
@@ -169,7 +169,7 @@ func hasInHEAD(dir, key string) bool {
 	return len(strings.TrimSpace(string(out))) > 0
 }
 
-// hasInIndex checks if a file or directory exists in the git index.
+// hasInIndex verifies if a specific file or directory (key) is currently tracked in the git index (staging area).
 func hasInIndex(dir, key string) bool {
 	cmd := exec.Command("git", "ls-files", "--", key)
 	cmd.Dir = dir
@@ -186,7 +186,8 @@ func hasInIndex(dir, key string) bool {
 	return len(strings.TrimSpace(string(out))) > 0
 }
 
-// generateCommitMessage creates a smart message based on the changed files and directories.
+// generateCommitMessage constructs a human-readable commit message by analyzing the changes.
+// It groups modifications by top-level directory or file to summarize additions, updates, and removals.
 func generateCommitMessage(dir string, changes []Change) string {
 	added := make(map[string]bool)
 	updated := make(map[string]bool)
@@ -244,7 +245,8 @@ func generateCommitMessage(dir string, changes []Change) string {
 	return strings.Join(sections, ", ")
 }
 
-// formatSection creates a human-readable list for a specific action (e.g., "Updated a, b and c").
+// formatSection converts a set of item names into a grammatically correct string list with the given prefix.
+// For example: "Updated a, b and c".
 func formatSection(prefix string, items map[string]bool) string {
 	if len(items) == 0 {
 		return ""
