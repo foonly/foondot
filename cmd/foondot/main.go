@@ -64,7 +64,7 @@ func Execute() {
 
 	switch command {
 	case "link":
-		runLink(cfg, *force)
+		dots.Link(cfg, *force)
 	case "sync":
 		err := git.Sync(cfg)
 		if err != nil {
@@ -73,34 +73,6 @@ func Execute() {
 		}
 	default:
 		// Fallback to link for backward compatibility or unrecognized commands
-		runLink(cfg, *force)
-	}
-}
-
-func runLink(cfg config.Config, force bool) {
-	config.ReadDotsData()
-
-	dotFiles := dots.FilterDots(cfg.Dots)
-
-	numberLinked := 0
-	for _, element := range dotFiles {
-		if dots.HandleDot(element, cfg.Dotfiles, force) {
-			numberLinked++
-		}
-	}
-
-	dots.CleanTargets(dotFiles)
-
-	config.WriteDotsData()
-
-	if force {
-		fmt.Fprintf(os.Stdout, "Force mode enabled\n")
-	}
-	if numberLinked == 0 {
-		fmt.Fprintf(os.Stdout, "No new dotfiles linked.\n")
-	} else if numberLinked == len(dotFiles) {
-		fmt.Fprintf(os.Stdout, "All %d dotfiles linked.\n", len(dotFiles))
-	} else {
-		fmt.Fprintf(os.Stdout, "%d of %d dotfiles linked.\n", numberLinked, len(dotFiles))
+		dots.Link(cfg, *force)
 	}
 }

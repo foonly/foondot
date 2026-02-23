@@ -1,6 +1,7 @@
 package dots
 
 import (
+	"fmt"
 	"os"
 	"path"
 	"slices"
@@ -12,6 +13,42 @@ import (
 )
 
 /**
+ * Orchestrates the linking process for dotfiles. It reads the current state,
+ * filters dotfiles based on the current hostname, handles the linking of
+ * each dotfile, cleans up any obsolete links, and persists the new state.
+ *
+ * @param cfg The configuration object containing dotfile definitions and settings.
+ * @param force Whether to force the linking process, overriding existing files if necessary.
+ */
+func Link(cfg config.Config, force bool) {
+	config.ReadDotsData()
+
+	dotFiles := filterDots(cfg.Dots)
+
+	numberLinked := 0
+	for _, element := range dotFiles {
+		if handleDot(element, cfg.Dotfiles, force) {
+			numberLinked++
+		}
+	}
+
+	cleanTargets(dotFiles)
+
+	config.WriteDotsData()
+
+	if force {
+		fmt.Fprintf(os.Stdout, "Force mode enabled\n")
+	}
+	if numberLinked == 0 {
+		fmt.Fprintf(os.Stdout, "No new dotfiles linked.\n")
+	} else if numberLinked == len(dotFiles) {
+		fmt.Fprintf(os.Stdout, "All %d dotfiles linked.\n", len(dotFiles))
+	} else {
+		fmt.Fprintf(os.Stdout, "%d of %d dotfiles linked.\n", numberLinked, len(dotFiles))
+	}
+}
+
+/**
  * Filters a list of dotfile items based on hostname. If a dotfile item has a
  * hostname defined, it is included in the filtered list only if the current
  * hostname is present in the dotfile's hostname list. If a dotfile item does
@@ -21,7 +58,7 @@ import (
  * @return A new slice of Item structs containing only the dotfile items that
  *         match the hostname criteria.
  */
-func FilterDots(dots []config.Item) []config.Item {
+func filterDots(dots []config.Item) []config.Item {
 	newDots := []config.Item{}
 	for _, dot := range dots {
 		if len(dot.Hostname) == 0 || slices.Contains(dot.Hostname, config.Hostname) {
@@ -40,7 +77,7 @@ func FilterDots(dots []config.Item) []config.Item {
 * @param force Whether to force relinking and move existing files.
 * @return True if the link was successfully created, false otherwise.
  */
-func HandleDot(item config.Item, dotfiles string, force bool) bool {
+func handleDot(item config.Item, dotfiles string, force bool) bool {
 
 	source := path.Join(xdg.Home, dotfiles, item.Source)
 	target := path.Join(xdg.Home, item.Target)
@@ -61,7 +98,7 @@ func HandleDot(item config.Item, dotfiles string, force bool) bool {
  *
  * @param dots A slice of Item structs representing the current dotfile items.
  */
-func CleanTargets(dots []config.Item) {
+func cleanTargets(dots []config.Item) {
 	var targets []string
 	// Create a list of targets from defined dots.
 	for _, item := range dots {
