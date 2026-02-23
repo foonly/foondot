@@ -68,11 +68,10 @@ func Execute() {
 	case "sync":
 		err := git.Sync(cfg)
 		if err != nil {
-			utils.PrintError("Sync failed:", err.Error())
+			utils.PrintError("Sync failed", err.Error())
 			os.Exit(1)
 		}
 	default:
-		// Fallback to link for backward compatibility or unrecognized commands
-		dots.Link(cfg, *force)
+		utils.PrintError("Unknown command", command)
 	}
 }
