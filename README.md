@@ -36,14 +36,14 @@ dots = [
 
 ## Commands
 
-### `link` (default)
+### `link`
 
 Creates symlinks from the `source` files/directories in your `dotfiles` directory to the `target` locations specified in the configuration file.
 
 - **Handling Conflicts**: If a file or directory already exists at the `target` location, Foondot will move the existing file/directory into your `dotfiles` directory before linking. If the source file/directory also exists, it appends `.conflict` to the name. For example, if `.config/program` already exists, it will be moved to `dotfiles/program.conflict`.
 - **Removing Symlinks**: Foondot tries to clean up links when they are removed from the config or no longer active for your hostname. It does this by keeping track of all the links it has written.
 
-### `sync`
+### `sync` (default)
 
 Automatically synchronizes your dotfiles repository using Git. It follows a streamlined workflow:
 
@@ -67,11 +67,9 @@ Foondot uses a subcommand structure. Running it without a command defaults to `l
 
 ### Examples:
 
-- **Link dotfiles** (default behavior):
+- **Link dotfiles**:
 
   ```bash
-  foondot
-  # or explicitly
   foondot link
   ```
 

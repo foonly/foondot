@@ -57,7 +57,7 @@ func Execute() {
 
 	// Subcommand parsing
 	args := flag.Args()
-	command := "link"
+	command := "sync"
 	if len(args) > 0 {
 		command = args[0]
 	}
