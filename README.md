@@ -30,7 +30,7 @@ dots = [
 - `dotfiles`: (String, required) The path to your dotfiles directory, relative to your `$HOME` directory. This directory should contain the source files and directories that you want to symlink.
 - `color`: (Boolean, optional) Enable color output in the console. Defaults to `false`.
 - `dots`: (Array of Tables, required) An array of dot entries, where each entry defines a symlink.
-  - `source`: (String, required) The path to the source file or directory within your `dotfiles` directory, relative to the `dotfiles` path.
+  - `source`: (String, required) The path to the source file or directory within your `dotfiles` directory, relative to the `dotfiles` path. If the source path ends in /\*, the individual files in the folder are linked separately.
   - `target`: (String, required) The target path for the symlink. This can be either relative to your `$HOME` directory or an absolute path.
   - `hostname`: (Array of Strings, optional) An array of hostnames where this dot entry should be applied. If not specified, the entry will be applied to all hosts.
 
@@ -42,6 +42,7 @@ Creates symlinks from the `source` files/directories in your `dotfiles` director
 
 - **Handling Conflicts**: If a file or directory already exists at the `target` location, Foondot will move the existing file/directory into your `dotfiles` directory before linking. If the source file/directory also exists, it appends `.conflict` to the name. For example, if `.config/program` already exists, it will be moved to `dotfiles/program.conflict`.
 - **Removing Symlinks**: Foondot tries to clean up links when they are removed from the config or no longer active for your hostname. It does this by keeping track of all the links it has written.
+- **Using Wildcards**: If the source path ends in /\*, the individual files in the folder are linked to the target location. This is useful if you want to combine different source paths into the same target. Note however that if using this, you need to re-link if you add or remove files or folders.
 
 ### `sync` (default)
 
