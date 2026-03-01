@@ -6,6 +6,7 @@ import (
 	"path"
 	"slices"
 	"strconv"
+	"strings"
 
 	"foonly.dev/foondot/internal/config"
 	"foonly.dev/foondot/internal/utils"
@@ -23,7 +24,9 @@ import (
 func Link(cfg config.Config, force bool) {
 	config.ReadDotsData()
 
-	dotFiles := filterDots(cfg.Dots)
+	dotFiles := filterDots(cfg.Dotfiles, cfg.Dots)
+
+	cleanTargets(dotFiles)
 
 	numberLinked := 0
 	for _, element := range dotFiles {
@@ -31,8 +34,6 @@ func Link(cfg config.Config, force bool) {
 			numberLinked++
 		}
 	}
-
-	cleanTargets(dotFiles)
 
 	config.WriteDotsData()
 
@@ -58,12 +59,30 @@ func Link(cfg config.Config, force bool) {
  * @return A new slice of Item structs containing only the dotfile items that
  *         match the hostname criteria.
  */
-func filterDots(dots []config.Item) []config.Item {
+func filterDots(dotfileFolder string, dots []config.Item) []config.Item {
 	newDots := []config.Item{}
 	for _, dot := range dots {
-		if len(dot.Hostname) == 0 || slices.Contains(dot.Hostname, config.Hostname) {
-			newDots = append(newDots, dot)
+		if len(dot.Hostname) > 0 && !slices.Contains(dot.Hostname, config.Hostname) {
+			continue
 		}
+		// If the source ends with /* expand it to include all files in the directory
+		if before, ok := strings.CutSuffix(dot.Source, "/*"); ok {
+			sourcePath := path.Join(xdg.Home, dotfileFolder, before)
+			// Loop all files and folders in newSource and add them as separate dotfile items
+			files, err := os.ReadDir(sourcePath)
+			if err != nil {
+				utils.PrintError("Error reading", sourcePath)
+				continue
+			}
+			for _, file := range files {
+				item := dot
+				item.Source = path.Join(before, file.Name())
+				item.Target = path.Join(dot.Target, file.Name())
+				newDots = append(newDots, item)
+			}
+			continue
+		}
+		newDots = append(newDots, dot)
 	}
 	return newDots
 }
