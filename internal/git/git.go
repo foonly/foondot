@@ -32,7 +32,14 @@ func Sync(cfg config.Config) error {
 	// 1. Pull changes first using rebase and autostash.
 	// This ensures we have the latest remote changes and helps avoid merge commits.
 	if err := pull(dotfilesDir); err != nil {
-		return fmt.Errorf("failed to pull changes: %w. Please resolve conflicts manually", err)
+		if isRebasing(dotfilesDir) {
+			utils.PrintMessage("Conflicts detected during pull. Applying strategy:", cfg.SyncStrategy)
+			if err := resolveRebase(dotfilesDir, cfg.SyncStrategy); err != nil {
+				return fmt.Errorf("failed to resolve conflicts: %w. Please resolve manually", err)
+			}
+		} else {
+			return fmt.Errorf("failed to pull changes: %w. Please resolve conflicts manually", err)
+		}
 	}
 
 	utils.PrintMessage("Checking for changes in", dotfilesDir)
@@ -51,6 +58,24 @@ func Sync(cfg config.Config) error {
 	if len(changes) == 0 {
 		utils.PrintMessage("No local changes to sync.")
 		return nil
+	}
+
+	// Safety check: Ensure no conflict markers are about to be committed.
+	for _, change := range changes {
+		// We only check files that were modified, added, or renamed
+		if strings.Contains(change.Status, "M") || strings.Contains(change.Status, "A") || strings.Contains(change.Status, "U") || strings.Contains(change.Status, "R") {
+			filePath := change.Path
+			// Handle rename format: "old -> new"
+			if strings.Contains(filePath, " -> ") {
+				parts := strings.Split(filePath, " -> ")
+				filePath = strings.Trim(parts[1], "\"")
+			}
+
+			fullPath := path.Join(dotfilesDir, filePath)
+			if utils.ContainsConflictMarkers(fullPath) {
+				return fmt.Errorf("file %s contains conflict markers. Please resolve manually before syncing", filePath)
+			}
+		}
 	}
 
 	// 3. Generate a human-readable commit message based on the staged changes.
@@ -76,6 +101,87 @@ func isRepo(dir string) bool {
 	cmd.Dir = dir
 	err := cmd.Run()
 	return err == nil
+}
+
+// isRebasing checks if the repository is currently in the middle of a rebase operation.
+func isRebasing(dir string) bool {
+	rebaseApply := path.Join(dir, ".git", "rebase-apply")
+	rebaseMerge := path.Join(dir, ".git", "rebase-merge")
+	_, errApply := os.Stat(rebaseApply)
+	_, errMerge := os.Stat(rebaseMerge)
+	return !os.IsNotExist(errApply) || !os.IsNotExist(errMerge)
+}
+
+// getConflictedFiles returns a list of files that currently have merge conflicts.
+func getConflictedFiles(dir string) ([]string, error) {
+	cmd := exec.Command("git", "diff", "--name-only", "--diff-filter=U")
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+	output := strings.TrimSpace(string(out))
+	if output == "" {
+		return nil, nil
+	}
+	return strings.Split(output, "\n"), nil
+}
+
+// resolveRebase attempts to resolve a rebase conflict based on the provided strategy.
+func resolveRebase(dir string, strategy string) error {
+	if strategy == "manual" {
+		// Abort rebase to leave the repo in a clean state (as much as possible)
+		exec.Command("git", "rebase", "--abort").Run()
+		return fmt.Errorf("sync strategy set to 'manual'. Aborting rebase")
+	}
+
+	// Rebase might involve multiple commits, so we might need to resolve multiple times.
+	for isRebasing(dir) {
+		conflicts, err := getConflictedFiles(dir)
+		if err != nil {
+			return err
+		}
+
+		// During a rebase:
+		// --ours is the branch we are rebasing onto (remote/upstream)
+		// --theirs is the branch we are moving (local changes)
+		checkoutFlag := "--theirs"
+		if strategy == "remote" {
+			checkoutFlag = "--ours"
+		}
+
+		for _, file := range conflicts {
+			if file == "" {
+				continue
+			}
+			utils.PrintMessage("Auto-resolving conflict in", file, "using", strategy, "version")
+			checkoutCmd := exec.Command("git", "checkout", checkoutFlag, file)
+			checkoutCmd.Dir = dir
+			if err := checkoutCmd.Run(); err != nil {
+				return fmt.Errorf("failed to checkout %s version of %s: %w", strategy, file, err)
+			}
+
+			addCmd := exec.Command("git", "add", file)
+			addCmd.Dir = dir
+			if err := addCmd.Run(); err != nil {
+				return fmt.Errorf("failed to add resolved file %s: %w", file, err)
+			}
+		}
+
+		// Continue the rebase. We set GIT_EDITOR=true to avoid opening an editor for commit messages.
+		continueCmd := exec.Command("git", "rebase", "--continue")
+		continueCmd.Dir = dir
+		continueCmd.Env = append(os.Environ(), "GIT_EDITOR=true")
+		// We don't check for error immediately here because rebase continue might fail
+		// if there are more conflicts in the next commit, which we handle in the next iteration.
+		_ = continueCmd.Run()
+
+		if !isRebasing(dir) {
+			break
+		}
+	}
+
+	return nil
 }
 
 // getChanges retrieves and parses a list of repository file changes by executing 'git status --porcelain'.

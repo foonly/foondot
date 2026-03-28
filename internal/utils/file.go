@@ -3,6 +3,7 @@ package utils
 import (
 	"errors"
 	"os"
+	"strings"
 )
 
 /**
@@ -36,4 +37,21 @@ func GetType(fileName string) int {
 		return IsDirectory
 	}
 	return IsFile
+}
+
+/**
+ * Checks if a file contains git conflict markers.
+ *
+ * @param filePath The path to the file.
+ * @return bool True if conflict markers are found, false otherwise.
+ */
+func ContainsConflictMarkers(filePath string) bool {
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return false
+	}
+	content := string(data)
+	return strings.Contains(content, "<<<<<<<") &&
+		strings.Contains(content, "=======") &&
+		strings.Contains(content, ">>>>>>>")
 }

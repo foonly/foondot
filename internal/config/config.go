@@ -42,9 +42,10 @@ type Item struct {
  *   Dots:     A slice of Item structs, each representing a dotfile symlink configuration.
  */
 type Config struct {
-	Dotfiles string `toml:"dotfiles" comment:"Path to your dotfiles relative to your $HOME directory"`
-	Color    bool   `toml:"color"    comment:"Enable color output"`
-	Dots     []Item `toml:"dots"     comment:"A dot entry representing a symlink, 'source' is relative to 'dotfiles'\nand 'target' shall be relative to $HOME directory or absolute.\nExample:\ndots = [{source = 'bash/bashrc', target = '.bashrc'}]"`
+	Dotfiles     string `toml:"dotfiles"      comment:"Path to your dotfiles relative to your $HOME directory"`
+	Color        bool   `toml:"color"         comment:"Enable color output"`
+	SyncStrategy string `toml:"sync_strategy" comment:"Strategy for resolving git conflicts (manual, local, remote)"`
+	Dots         []Item `toml:"dots"          comment:"A dot entry representing a symlink, 'source' is relative to 'dotfiles'\nand 'target' shall be relative to $HOME directory or absolute.\nExample:\ndots = [{source = 'bash/bashrc', target = '.bashrc'}]"`
 }
 
 var Hostname = "unknown"
@@ -75,6 +76,10 @@ func ReadConfig(configFile string) Config {
 		os.Exit(2)
 	}
 
+	if cfg.SyncStrategy == "" {
+		cfg.SyncStrategy = "manual"
+	}
+
 	return cfg
 }
 
@@ -86,9 +91,10 @@ func ReadConfig(configFile string) Config {
  */
 func CreateDefaultConfig(configFile string) {
 	defaultConfig := Config{
-		Dotfiles: "dotfiles",
-		Color:    false,
-		Dots:     []Item{},
+		Dotfiles:     "dotfiles",
+		Color:        false,
+		SyncStrategy: "manual",
+		Dots:         []Item{},
 	}
 
 	utils.PrintMessage("Creating config file in", configFile)
