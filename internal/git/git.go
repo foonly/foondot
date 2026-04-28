@@ -29,17 +29,27 @@ func Sync(cfg config.Config) error {
 		return fmt.Errorf("directory %s is not a git repository", dotfilesDir)
 	}
 
+	// A repository without any configured remote can still be a meaningful
+	// dotfiles store (e.g. local-only experiments before pushing to a host).
+	// Skip the pull/push round-trips entirely in that case so the local
+	// commit still happens (#7).
+	hasRemote := repoHasRemote(dotfilesDir)
+
 	// 1. Pull changes first using rebase and autostash.
 	// This ensures we have the latest remote changes and helps avoid merge commits.
-	if err := pull(dotfilesDir); err != nil {
-		if isRebasing(dotfilesDir) {
-			utils.PrintMessage("Conflicts detected during pull. Applying strategy:", cfg.SyncStrategy)
-			if err := resolveRebase(dotfilesDir, cfg.SyncStrategy); err != nil {
-				return fmt.Errorf("failed to resolve conflicts: %w. Please resolve manually", err)
+	if hasRemote {
+		if err := pull(dotfilesDir); err != nil {
+			if isRebasing(dotfilesDir) {
+				utils.PrintMessage("Conflicts detected during pull. Applying strategy:", cfg.SyncStrategy)
+				if err := resolveRebase(dotfilesDir, cfg.SyncStrategy); err != nil {
+					return fmt.Errorf("failed to resolve conflicts: %w. Please resolve manually", err)
+				}
+			} else {
+				return fmt.Errorf("failed to pull changes: %w. Please resolve conflicts manually", err)
 			}
-		} else {
-			return fmt.Errorf("failed to pull changes: %w. Please resolve conflicts manually", err)
 		}
+	} else {
+		utils.PrintMessage("No git remote configured; skipping pull.")
 	}
 
 	utils.PrintMessage("Checking for changes in", dotfilesDir)
@@ -85,14 +95,34 @@ func Sync(cfg config.Config) error {
 		return fmt.Errorf("failed to commit: %w", err)
 	}
 
-	// 4. Push the new commit to the remote repository.
-	utils.PrintMessage("Pushing changes...")
-	if err := push(dotfilesDir); err != nil {
-		return fmt.Errorf("failed to push: %w", err)
+	// 4. Push the new commit to the remote repository (only if there is one).
+	if hasRemote {
+		utils.PrintMessage("Pushing changes...")
+		if err := push(dotfilesDir); err != nil {
+			return fmt.Errorf("failed to push: %w", err)
+		}
+	} else {
+		utils.PrintMessage("No git remote configured; skipping push.")
 	}
 
 	utils.PrintMessage("Sync completed successfully")
 	return nil
+}
+
+// repoHasRemote returns true if the dotfiles git repository has at least
+// one named remote (e.g. `origin`). When no remotes are configured the
+// caller should skip pull/push and still allow the local commit, so a
+// remote-less local-only repo is a usable dotfiles store (#7).
+func repoHasRemote(dir string) bool {
+	cmd := exec.Command("git", "remote")
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		// Treat any error as "no remote" — the existing pull/push code
+		// would have surfaced it anyway. False is the conservative answer.
+		return false
+	}
+	return strings.TrimSpace(string(out)) != ""
 }
 
 // isRepo determines whether the specified directory path resides within a valid git work tree.
