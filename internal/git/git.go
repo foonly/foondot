@@ -118,7 +118,7 @@ func repoHasRemote(dir string) bool {
 	cmd.Dir = dir
 	out, err := cmd.Output()
 	if err != nil {
-		// Treat any error as "no remote" — the existing pull/push code
+		// Treat any error as "no remote", the existing pull/push code
 		// would have surfaced it anyway. False is the conservative answer.
 		return false
 	}
