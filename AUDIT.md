@@ -1,6 +1,6 @@
 # Foondot Code Quality and Security Audit
 
-Audit of foondot 0.12.0 (`59e8ebd`), updated 2026-09-29 after three rounds of fixes.
+Audit of foondot 0.12.0 (`59e8ebd`), updated 2026-09-29 after four rounds of fixes.
 
 ## Summary
 
@@ -10,33 +10,33 @@ Foondot is small (about 1,000 lines of Go) and has few dependencies. `go vet` an
 - link cleanup that could remove more than it should
 - a default command that committed and pushed without being asked
 
-These are fixed, together with absolute targets, git output parsing, config checks and error reporting, and each fix is covered by tests. The remaining open findings are about error handling, structure and the release workflow, and are listed below by priority.
+These are fixed, along with absolute targets, git output parsing, config checks, error reporting and exit codes, the link tracking file and the release workflow. Each fix is covered by tests. What remains open is mostly structure and style, plus reviewing files before `sync` publishes them.
 
 Severity is given for a single-user tool that runs with your own permissions on your own config and dotfiles repository. The config file is trusted input. Repository contents are semi-trusted, because they may come from another machine through `sync`.
 
 | # | Finding | Severity | Status |
 |---|---------|----------|--------|
-| 1 | `manual` strategy aborts the rebase in the wrong directory | High | Fixed `18b9648` |
-| 2 | Conflict resolve loop can hang forever | High | Fixed `18b9648` |
-| 3 | Absolute `target` paths are placed under `$HOME` | High | Fixed `f47a1f6` |
-| 4 | Link cleanup removes links it doesn't own or shouldn't remove | High | Fixed `89de62f` |
-| 5 | Running without a command syncs (commits and pushes everything) | High | Fixed `d75ca29` |
-| 6 | Flags after the command are silently ignored | Medium | Fixed `d75ca29` |
-| 7 | Wrong exit codes | Medium | Partly fixed `d75ca29` |
-| 8 | Fragile parsing of git output lets the conflict-marker check be bypassed | Medium | Fixed `360630a` |
-| 9 | Filenames passed to git without `--` | Medium | Fixed `360630a` |
-| 10 | `sync_strategy` value is not checked | Medium | Fixed `8da099b` |
-| 11 | Repository detection assumes a plain `.git` folder | Medium | Open |
-| 12 | Garbled output when resolving conflicts | Low | Fixed `595307e` |
-| 13 | Filesystem errors are ignored during linking | Medium | Fixed `c381552` |
-| 14 | Backups and moved files end up in the synced repository | Medium | Partly fixed `c381552` |
-| 15 | Link tracking file is fragile | Low | Open |
-| 16 | Git errors carry no detail | Low | Fixed `595307e` |
+| 1 | `manual` strategy aborts the rebase in the wrong directory | High | Fixed `9a27749` |
+| 2 | Conflict resolve loop can hang forever | High | Fixed `9a27749` |
+| 3 | Absolute `target` paths are placed under `$HOME` | High | Fixed `7e764a0` |
+| 4 | Link cleanup removes links it doesn't own or shouldn't remove | High | Fixed `96f9b70` |
+| 5 | Running without a command syncs (commits and pushes everything) | High | Fixed `bb19492` |
+| 6 | Flags after the command are silently ignored | Medium | Fixed `bb19492` |
+| 7 | Wrong exit codes | Medium | Fixed `bb19492`, `d1c5c35` |
+| 8 | Fragile parsing of git output lets the conflict-marker check be bypassed | Medium | Fixed `f470d9d` |
+| 9 | Filenames passed to git without `--` | Medium | Fixed `f470d9d` |
+| 10 | `sync_strategy` value is not checked | Medium | Fixed `db24da6` |
+| 11 | Repository detection assumes a plain `.git` folder | Medium | Fixed `8e40d72` |
+| 12 | Garbled output when resolving conflicts | Low | Fixed `2264e44` |
+| 13 | Filesystem errors are ignored during linking | Medium | Fixed `0934a34` |
+| 14 | Backups and moved files end up in the synced repository | Medium | Partly fixed `0934a34` |
+| 15 | Link tracking file is fragile | Low | Fixed `d986b3b` |
+| 16 | Git errors carry no detail | Low | Fixed `2264e44` |
 | 17 | Structure: `os.Exit` in internal packages, global state | Medium | Open |
 | 18 | Tests only cover the fixed areas | Medium | Partly fixed |
-| 19 | Go style issues | Low | Open |
-| 20 | Release workflow | Low | Open |
-| 21 | README is out of date | Low | Fixed `d75ca29`, `8da099b` |
+| 19 | Go style issues | Low | Partly fixed |
+| 20 | Release workflow | Low | Fixed `bdfd8b5` |
+| 21 | README is out of date | Low | Fixed `bb19492`, `db24da6` |
 
 ## Fixed
 
@@ -89,6 +89,18 @@ Go's standard `flag` package stops at the first argument that isn't a flag, so `
 
 **Fix:** the remaining arguments are parsed again after the command. Leftover arguments are an error.
 
+### 7. Wrong exit codes
+
+Unknown commands exited with 0, and `link` always exited with 0, even when links failed or files couldn't be moved. That hid failures from scripts.
+
+**Fix:**
+
+- Unknown commands and unexpected arguments exit with 2.
+- `link` exits with 1 when any dotfile or old link failed, and says how many. Dotfiles that are already linked count as success.
+- A target that's a symlink to another location used to be skipped silently. It is now reported, with a hint to use `-f`.
+
+Tests: `TestLinkReturnsFailures`, `TestHandleDotExistingLinks`, `TestHandleDotMissingSource`.
+
 ### 8. Fragile parsing of git output lets the conflict-marker check be bypassed
 
 - `strings.TrimSpace` on the whole `git status --porcelain` output removed the leading space of the first line. ` M sub` was parsed as status `M` and path `ub`.
@@ -115,6 +127,19 @@ Tests: `TestGetChanges`, `TestCheckConflictMarkers`, `TestContainsConflictMarker
 Only `manual` and `remote` were compared against. Any other value, including a typo like `remot`, behaved like `local` and silently replaced remote changes with local ones.
 
 **Fix:** values other than `manual`, `local` and `remote` are rejected when the config is loaded. Test: `TestValidateConfigSyncStrategy`.
+
+### 11. Repository detection assumes a plain `.git` folder
+
+- `isRebasing` looked for `<dotfiles>/.git/rebase-*`. That fails for worktrees and submodules, where `.git` is a file, and when the dotfiles folder is a subfolder of a repository. In a worktree, it even reported a rebase when there was none.
+- It treated any error other than "not found" (e.g. permission denied) as "rebasing".
+- `isRepo` accepted any folder inside a work tree. If `$HOME` was itself a repository, `git add -A` staged the entire home work tree, not just the dotfiles. In a subfolder, the conflict-marker check also looked for files in the wrong place.
+
+**Fix:**
+
+- `isRebasing` asks git for the location of its rebase state (`git rev-parse --git-path`).
+- `sync` requires the dotfiles folder to be the top level of its own repository, comparing paths with symlinks resolved. This is a breaking change for anyone who kept dotfiles in a subfolder of a larger repository, a setup that didn't work correctly before either.
+
+Tests: `TestCheckRepo`, `TestIsRebasingWorktree`.
 
 ### 12. Garbled output when resolving conflicts
 
@@ -146,11 +171,32 @@ With `-f`, `link` moved an existing target to `<source>.conflict` inside the dot
 
 **Fix:** backups are written to `$XDG_DATA_HOME/foondot/backup/<target path>`, outside the repository, with a number appended when a backup already exists. Test: `TestHandleDotForceBacksUpOutsideDotfiles`. Moving a target into the dotfiles folder when its source doesn't exist yet is intended, and remains open below.
 
+### 15. Link tracking file is fragile
+
+- Any error reading `dots.json`, not just "file not found", was treated as an empty list. The file was then overwritten and all tracking was lost, so old links were never cleaned up.
+- The write wasn't atomic. An interruption could leave broken JSON, which then blocked every later `link`.
+
+**Fix:** only a missing file counts as empty, and other errors stop with a message. The file is written to a temporary file that is renamed over the old one. Links that already exist and point to the right source are tracked again, so a lost `dots.json` recovers on the next `link`. Tests: `TestReadDotsData`, `TestWriteFileAtomic*`, `TestHandleDotExistingLinks`.
+
 ### 16. Git errors carry no detail
 
 `stageAll`, `commit` and similar helpers discarded git's stderr, so a failure showed up as `exit status 1`. For example, a missing git identity was reported only as "failed to commit: exit status 1".
 
 **Fix:** all git commands except `pull` and `push`, which stream their output to the terminal, now include git's message in the returned error. Tests: `TestCommitErrorIncludesGitMessage`, `TestGitOutputErrorIncludesStderr`.
+
+### 20. Release workflow
+
+- It used Go `1.22.x`, while `go.mod` requires `1.24.0`. It only worked because Go downloads the newer toolchain automatically.
+- `go get .` can modify `go.mod`.
+- Actions were pinned to tags, not exact commits. That included the third-party `ncipollo/release-action`, which runs with `contents: write`.
+- There was no `go vet` or `go test` step before releasing, and no checksums were published for the binary.
+
+**Fix:**
+
+- The Go version is read from `go.mod`, and dependencies are fetched with `go mod download`.
+- `go vet` and `go test` run before the build.
+- The binary is built statically (`CGO_ENABLED=0`, `-trimpath`), and `SHA256SUMS` is published with it.
+- Actions are pinned to commits: checkout v4.4.0, setup-go v5.6.0, release-action v1.21.0. Newer major versions of checkout and setup-go (v7) exist, so upgrading them is a separate decision.
 
 ### 21. README is out of date
 
@@ -160,27 +206,6 @@ The README named `link` as the default in one place and `sync` in another. It di
 
 ## Open
 
-### 7. Wrong exit codes (partly fixed)
-
-**Where:** `internal/dots/dots.go`
-
-Unknown commands and unexpected arguments now exit with 2. `link` still always exits with 0, even when links failed or files couldn't be moved, which hides failures from scripts.
-
-**Recommendation:** have `Link` return an error or a failure count, and exit non-zero when anything failed.
-
-### 11. Repository detection assumes a plain `.git` folder
-
-**Where:** `internal/git/git.go:135` (`isRepo`), `:143` (`isRebasing`)
-
-- `isRebasing` looks for `<dotfiles>/.git/rebase-*`. That fails for worktrees and submodules, where `.git` is a file, and when the dotfiles folder is a subfolder of a repository. The code then reports "failed to pull" instead of applying the strategy.
-- It also treats any error other than "not found" (e.g. permission denied) as "rebasing".
-- `isRepo` accepts any folder inside a work tree. If `$HOME` is itself a repository, `git add -A` stages the entire home work tree, not just the dotfiles.
-
-**Recommendation:**
-
-- Use `git rev-parse --git-path rebase-merge` (and `rebase-apply`) to find the rebase state.
-- Require `git rev-parse --show-toplevel` to equal the dotfiles folder, or pass the folder as a pathspec to `git add`.
-
 ### 14. Moved files end up in the synced repository (partly fixed)
 
 **Where:** `internal/dots/dots.go` (`prepareTargetSource`) together with `sync`
@@ -189,50 +214,30 @@ When a target exists but its source doesn't, `link` moves the target into the do
 
 **Recommendation:** have `sync` list new files before committing, or offer a `--dry-run`.
 
-### 15. Link tracking file is fragile
-
-**Where:** `internal/config/config.go:156`, `:179`
-
-- Any error reading `dots.json`, not just "file not found", is treated as an empty list. The file is then overwritten and all tracking is lost, so old links are never cleaned up.
-- The write isn't atomic. An interruption can leave broken JSON, which then blocks every later `link`.
-
-**Recommendation:** only treat `fs.ErrNotExist` as empty, and write to a temporary file that is then renamed over the old one.
-
 ### 17. Structure: `os.Exit` in internal packages, global state
 
-- `config` calls `os.Exit` from inside the package, and `dots` doesn't return errors, which makes both hard to test and to reuse.
+- `config` calls `os.Exit` from inside the package (`ReadConfig`, `CreateDefaultConfig`, `ReadDotsData`, `WriteDotsData`), which makes it hard to test and to reuse. `dots.Link` and `git.Sync` return errors.
 - `config.Hostname`, `config.DotsData`, `utils.Color` and the use of `xdg.Home` are package-level state. The new tests have to save and restore them.
 
 **Recommendation:** return errors to `cmd/foondot`, which decides the exit code. Pass the hostname, home and dotfiles folders, and the tracked links in a small state struct.
 
 ### 18. Tests only cover the fixed areas (partly fixed)
 
-Tests now cover filtering, cleanup, link ownership, absolute targets, moving targets and backups, error reporting, the conflict strategies, git output parsing and errors, the conflict-marker check and `sync_strategy` validation. Still missing:
+Tests now cover filtering, cleanup, link ownership, absolute targets, moving targets and backups, error reporting, `Link` as a whole, the link tracking file, the conflict strategies, repository detection, git output parsing and errors, the conflict-marker check and `sync_strategy` validation. CI runs them before each release. Still missing:
 
 - loading and decoding the config file
 - the `Sync` flow end to end
 - command-line argument handling
 
-### 19. Go style issues
+### 19. Go style issues (partly fixed)
+
+Uses of `os.IsNotExist` and redundant `[]byte(data)` conversions were removed while fixing other items. Remaining:
 
 - Doc comments use `/** ... */` with ` * ` prefixes. `go doc` shows the asterisks, and `git.go` already uses `//` comments.
 - File types are plain integer constants. A named type (`type FileType int`) would let the compiler catch misuse.
 - `PrintMessage` and `PrintError` pick a format from the number of arguments. Extra arguments are silently dropped (this caused #12), and calling them with no arguments panics.
 - `path` is used where `path/filepath` belongs for filesystem paths.
-- `os.IsNotExist` is used instead of `errors.Is(err, fs.ErrNotExist)`.
-- `[]byte(data)` converts data that is already `[]byte`.
 - When `os.Hostname()` fails, the hostname becomes `""` instead of keeping the `"unknown"` default (`cmd/foondot/main.go:49`).
-
-### 20. Release workflow
-
-**Where:** `.github/workflows/make-release.yaml`
-
-- It uses Go `1.22.x`, while `go.mod` requires `1.24.0`. It works only because Go downloads the newer toolchain automatically.
-- `go get .` can modify `go.mod`. Use `go mod download`.
-- Actions are pinned to tags, not exact commits. That includes the third-party `ncipollo/release-action`, which runs with `contents: write`.
-- There is no `go vet` or `go test` step before releasing, and no checksums are published for the binary.
-
-**Recommendation:** read the Go version from `go.mod` (`go-version-file: go.mod`), pin actions to commit SHAs, add vet and test steps, and publish a `SHA256SUMS` file.
 
 ## Not considered an issue
 
