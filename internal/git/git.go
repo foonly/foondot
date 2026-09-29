@@ -15,8 +15,9 @@ import (
 
 // Change represents a file modification, addition, deletion, or rename within the git repository.
 type Change struct {
-	Status string // M, A, D, R, etc.
-	Path   string // Path relative to repo root
+	Status  string // M, A, D, R, etc.
+	Path    string // Path relative to repo root
+	OldPath string // Original path for renames and copies, relative to repo root
 }
 
 // Sync orchestrates the automatic synchronization process for the dotfiles directory.
@@ -61,21 +62,8 @@ func Sync(cfg config.Config) error {
 	}
 
 	// Safety check: Ensure no conflict markers are about to be committed.
-	for _, change := range changes {
-		// We only check files that were modified, added, or renamed
-		if strings.Contains(change.Status, "M") || strings.Contains(change.Status, "A") || strings.Contains(change.Status, "U") || strings.Contains(change.Status, "R") {
-			filePath := change.Path
-			// Handle rename format: "old -> new"
-			if strings.Contains(filePath, " -> ") {
-				parts := strings.Split(filePath, " -> ")
-				filePath = strings.Trim(parts[1], "\"")
-			}
-
-			fullPath := path.Join(dotfilesDir, filePath)
-			if utils.ContainsConflictMarkers(fullPath) {
-				return fmt.Errorf("file %s contains conflict markers. Please resolve manually before syncing", filePath)
-			}
-		}
+	if err := checkConflictMarkers(dotfilesDir, changes); err != nil {
+		return err
 	}
 
 	// 3. Generate a human-readable commit message based on the staged changes.
@@ -92,6 +80,24 @@ func Sync(cfg config.Config) error {
 	}
 
 	utils.PrintMessage("Sync completed successfully")
+	return nil
+}
+
+// checkConflictMarkers returns an error if any modified, added or renamed file
+// contains git conflict markers, or can't be checked.
+func checkConflictMarkers(dir string, changes []Change) error {
+	for _, change := range changes {
+		if !strings.ContainsAny(change.Status, "MAUR") {
+			continue
+		}
+		found, err := utils.ContainsConflictMarkers(path.Join(dir, change.Path))
+		if err != nil {
+			return fmt.Errorf("could not check %s for conflict markers: %w", change.Path, err)
+		}
+		if found {
+			return fmt.Errorf("file %s contains conflict markers. Please resolve manually before syncing", change.Path)
+		}
+	}
 	return nil
 }
 
@@ -114,17 +120,20 @@ func isRebasing(dir string) bool {
 
 // getConflictedFiles returns a list of files that currently have merge conflicts.
 func getConflictedFiles(dir string) ([]string, error) {
-	cmd := exec.Command("git", "diff", "--name-only", "--diff-filter=U")
+	cmd := exec.Command("git", "diff", "--name-only", "-z", "--diff-filter=U")
 	cmd.Dir = dir
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, err
 	}
-	output := strings.TrimSpace(string(out))
-	if output == "" {
-		return nil, nil
+	// With -z, paths are NUL terminated and not quoted.
+	var files []string
+	for file := range strings.SplitSeq(string(out), "\x00") {
+		if file != "" {
+			files = append(files, file)
+		}
 	}
-	return strings.Split(output, "\n"), nil
+	return files, nil
 }
 
 // resolveRebase attempts to resolve a rebase conflict based on the provided strategy.
@@ -164,17 +173,14 @@ func resolveRebase(dir string, strategy string) error {
 		}
 
 		for _, file := range conflicts {
-			if file == "" {
-				continue
-			}
 			utils.PrintMessage("Auto-resolving conflict in", file, "using", strategy, "version")
-			checkoutCmd := exec.Command("git", "checkout", checkoutFlag, file)
+			checkoutCmd := exec.Command("git", "checkout", checkoutFlag, "--", file)
 			checkoutCmd.Dir = dir
 			if err := checkoutCmd.Run(); err != nil {
 				return fmt.Errorf("failed to checkout %s version of %s: %w", strategy, file, err)
 			}
 
-			addCmd := exec.Command("git", "add", file)
+			addCmd := exec.Command("git", "add", "--", file)
 			addCmd.Dir = dir
 			if err := addCmd.Run(); err != nil {
 				return fmt.Errorf("failed to add resolved file %s: %w", file, err)
@@ -193,35 +199,34 @@ func resolveRebase(dir string, strategy string) error {
 	return nil
 }
 
-// getChanges retrieves and parses a list of repository file changes by executing 'git status --porcelain'.
+// getChanges retrieves and parses a list of repository file changes by executing 'git status --porcelain -z'.
 func getChanges(dir string) ([]Change, error) {
-	cmd := exec.Command("git", "status", "--porcelain")
+	cmd := exec.Command("git", "status", "--porcelain", "-z")
 	cmd.Dir = dir
 	output, err := cmd.Output()
 	if err != nil {
 		return nil, err
 	}
 
-	outputStr := strings.TrimSpace(string(output))
-	if outputStr == "" {
-		return nil, nil
-	}
-
-	lines := strings.Split(outputStr, "\n")
+	// With -z, entries are NUL terminated and paths are not quoted.
+	// Format: "XY PATH", renames and copies are followed by an extra "ORIG_PATH" entry.
+	entries := strings.Split(string(output), "\x00")
 	var changes []Change
 
-	for _, line := range lines {
-		if len(line) < 4 {
+	for i := 0; i < len(entries); i++ {
+		entry := entries[i]
+		if len(entry) < 4 {
 			continue
 		}
-		// Porcelain format: XY PATH or XY PATH1 -> PATH2
-		status := strings.TrimSpace(line[:2])
-		filePath := strings.Trim(line[3:], "\"")
-
-		changes = append(changes, Change{
-			Status: status,
-			Path:   filePath,
-		})
+		change := Change{
+			Status: strings.TrimSpace(entry[:2]),
+			Path:   entry[3:],
+		}
+		if (entry[0] == 'R' || entry[0] == 'C') && i+1 < len(entries) {
+			i++
+			change.OldPath = entries[i]
+		}
+		changes = append(changes, change)
 	}
 
 	return changes, nil
@@ -311,22 +316,12 @@ func generateCommitMessage(dir string, changes []Change) string {
 	keys := make(map[string]bool)
 
 	for _, c := range changes {
-		// Handle renames (Status starts with R). Format is usually "R  old -> new"
-		if len(c.Status) > 0 && c.Status[0] == 'R' {
-			parts := strings.Split(c.Path, " -> ")
-			if len(parts) == 2 {
-				oldPath := strings.Trim(parts[0], "\"")
-				keys[strings.Split(oldPath, "/")[0]] = true
-
-				newPath := strings.Split(strings.Trim(parts[1], "\""), "/")[0]
-				keys[newPath] = true
-				continue
-			}
-		}
-
 		// Group changes by the top-level directory or file name.
-		parts := strings.Split(c.Path, "/")
-		keys[parts[0]] = true
+		// Renames count for both the old and the new location.
+		keys[strings.Split(c.Path, "/")[0]] = true
+		if c.OldPath != "" {
+			keys[strings.Split(c.OldPath, "/")[0]] = true
+		}
 	}
 
 	for key := range keys {

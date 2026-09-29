@@ -40,18 +40,47 @@ func GetType(fileName string) int {
 }
 
 /**
- * Checks if a file contains git conflict markers.
+ * Checks if a file contains git conflict markers. Only lines starting with a
+ * complete set of markers count, so text like a Markdown "=======" heading
+ * isn't reported. Anything other than a regular file (symlinks, directories
+ * such as submodules) is not checked.
  *
  * @param filePath The path to the file.
  * @return bool True if conflict markers are found, false otherwise.
+ * @return error Set if the file could not be read.
  */
-func ContainsConflictMarkers(filePath string) bool {
+func ContainsConflictMarkers(filePath string) (bool, error) {
+	stat, err := os.Lstat(filePath)
+	if err != nil {
+		return false, err
+	}
+	if !stat.Mode().IsRegular() {
+		return false, nil
+	}
 	data, err := os.ReadFile(filePath)
 	if err != nil {
-		return false
+		return false, err
 	}
-	content := string(data)
-	return strings.Contains(content, "<<<<<<<") &&
-		strings.Contains(content, "=======") &&
-		strings.Contains(content, ">>>>>>>")
+	var start, middle, end bool
+	for line := range strings.Lines(string(data)) {
+		line = strings.TrimRight(line, "\r\n")
+		switch {
+		case isMarker(line, "<<<<<<<"):
+			start = true
+		case line == "=======":
+			middle = true
+		case isMarker(line, ">>>>>>>"):
+			end = true
+		}
+	}
+	return start && middle && end, nil
+}
+
+/**
+ * Checks if a line is a git conflict marker, i.e. the marker alone or followed
+ * by a space and a label, such as "<<<<<<< HEAD".
+ */
+func isMarker(line string, marker string) bool {
+	rest, ok := strings.CutPrefix(line, marker)
+	return ok && (rest == "" || rest[0] == ' ')
 }
