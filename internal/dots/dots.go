@@ -24,9 +24,13 @@ import (
 func Link(cfg config.Config, force bool) {
 	config.ReadDotsData()
 
-	dotFiles := filterDots(cfg.Dotfiles, cfg.Dots)
+	dotFiles, complete := filterDots(cfg.Dotfiles, cfg.Dots)
 
-	cleanTargets(dotFiles)
+	if complete {
+		cleanTargets(path.Join(xdg.Home, cfg.Dotfiles), dotFiles)
+	} else {
+		utils.PrintError("Some sources could not be read, skipping removal of old links")
+	}
 
 	numberLinked := 0
 	for _, element := range dotFiles {
@@ -57,10 +61,12 @@ func Link(cfg config.Config, force bool) {
  *
  * @param dots A slice of Item structs representing the dotfile items to filter.
  * @return A new slice of Item structs containing only the dotfile items that
- *         match the hostname criteria.
+ *         match the hostname criteria, and false if a wildcard source could
+ *         not be read (the returned list is then incomplete).
  */
-func filterDots(dotfileFolder string, dots []config.Item) []config.Item {
+func filterDots(dotfileFolder string, dots []config.Item) ([]config.Item, bool) {
 	newDots := []config.Item{}
+	complete := true
 	for _, dot := range dots {
 		if len(dot.Hostname) > 0 && !slices.Contains(dot.Hostname, config.Hostname) {
 			continue
@@ -71,7 +77,8 @@ func filterDots(dotfileFolder string, dots []config.Item) []config.Item {
 			// Loop all files and folders in newSource and add them as separate dotfile items
 			files, err := os.ReadDir(sourcePath)
 			if err != nil {
-				utils.PrintError("Error reading", sourcePath)
+				utils.PrintError("Error reading", sourcePath, err.Error())
+				complete = false
 				continue
 			}
 			for _, file := range files {
@@ -84,7 +91,7 @@ func filterDots(dotfileFolder string, dots []config.Item) []config.Item {
 		}
 		newDots = append(newDots, dot)
 	}
-	return newDots
+	return newDots, complete
 }
 
 /**
@@ -111,13 +118,17 @@ func handleDot(item config.Item, dotfiles string, force bool) bool {
  * Iterates through the list of tracked dotfile targets (config.DotsData),
  * and for each target:
  *   - If the target is not a symlink, it is removed from the tracking array.
+ *   - If the target is a symlink that no longer points into the dotfiles
+ *     directory, it was replaced by something else and is only removed from
+ *     the tracking array.
  *   - If the target is a symlink but does not exist in the current list of
  *     dotfile targets, the symlink is removed from the filesystem and from
  *     the tracking array.
  *
+ * @param dotfilesDir The absolute path to the dotfiles directory.
  * @param dots A slice of Item structs representing the current dotfile items.
  */
-func cleanTargets(dots []config.Item) {
+func cleanTargets(dotfilesDir string, dots []config.Item) {
 	var targets []string
 	// Create a list of targets from defined dots.
 	for _, item := range dots {
@@ -127,6 +138,9 @@ func cleanTargets(dots []config.Item) {
 	config.DotsData = slices.DeleteFunc(config.DotsData, func(target string) bool {
 		if utils.GetType(target) != utils.IsSymlink {
 			// Target is not a symlink, remove from list.
+			return true
+		} else if !pointsInto(target, dotfilesDir) {
+			// Target is a symlink not created by us, stop tracking it.
 			return true
 		} else if !slices.Contains(targets, target) {
 			// Target is a symlink and doesn't exist in the list of targets.
@@ -141,6 +155,24 @@ func cleanTargets(dots []config.Item) {
 		return false
 	})
 
+}
+
+/**
+ * Checks whether a symlink points to a path inside the given directory.
+ *
+ * @param link The path to the symlink.
+ * @param dir The absolute path to the directory.
+ * @return True if the symlink destination is inside dir, false otherwise.
+ */
+func pointsInto(link string, dir string) bool {
+	dest, err := os.Readlink(link)
+	if err != nil {
+		return false
+	}
+	if !path.IsAbs(dest) {
+		dest = path.Join(path.Dir(link), dest)
+	}
+	return strings.HasPrefix(path.Clean(dest), path.Clean(dir)+"/")
 }
 
 /**

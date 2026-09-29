@@ -1,7 +1,9 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"path"
 
@@ -69,10 +71,16 @@ func ReadConfig(configFile string) Config {
 
 	var cfg Config
 
-	// Reading from a TOML file
-	err = toml.Unmarshal([]byte(data), &cfg)
+	// Reading from a TOML file. Unknown keys are rejected, since a typo could
+	// otherwise leave the dots list empty and cause every link to be removed.
+	err = toml.NewDecoder(bytes.NewReader(data)).DisallowUnknownFields().Decode(&cfg)
 	if err != nil {
-		utils.PrintError("Error reading TOML file", configFile, err.Error())
+		var strictErr *toml.StrictMissingError
+		if errors.As(err, &strictErr) {
+			utils.PrintError("Unknown keys in TOML file", configFile, strictErr.String())
+		} else {
+			utils.PrintError("Error reading TOML file", configFile, err.Error())
+		}
 		os.Exit(2)
 	}
 
