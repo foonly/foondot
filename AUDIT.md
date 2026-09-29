@@ -241,7 +241,9 @@ Tests: `TestHandleDotForceBacksUpOutsideDotfiles`, `TestSyncDryRun*`, `TestDescr
 - The Go version is read from `go.mod`, and dependencies are fetched with `go mod download`.
 - `go vet` and `go test` run before the build.
 - The binary is built statically (`CGO_ENABLED=0`, `-trimpath`), and `SHA256SUMS` is published with it.
-- Actions are pinned to commits: checkout v4.4.0, setup-go v5.6.0, release-action v1.21.0. Newer major versions of checkout and setup-go (v7) exist, so upgrading them is a separate decision.
+- Actions are pinned to commits. Newer major versions of checkout and setup-go (v7) exist, so upgrading them is a separate decision.
+
+The workflow has since been replaced by `.github/workflows/release.yml`, which follows foonver's own release workflow. It runs on pushes to `main` and `beta`, uses foonver to bump the version and update the changelog, creates the GitHub release, and publishes to the AUR. It keeps the fixes above, with all actions pinned to commits, including foonver itself and the foonver binary it downloads.
 
 ### 21. README is out of date
 

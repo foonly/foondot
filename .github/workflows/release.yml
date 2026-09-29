@@ -1,0 +1,75 @@
+name: foondot build
+
+on:
+  push:
+    branches:
+      - main
+      - beta
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # Required to create tags and releases
+    steps:
+      # Actions are pinned to commits, since tags can be moved.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0 # foonver needs history to determine the next version
+
+      - name: Setup Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+
+      - name: Run Tests
+        run: make test
+
+      - name: Verify Build
+        # This ensures the code compiles before we commit any version bumps
+        run: make build
+
+      - name: Run foonver
+        id: foonver
+        uses: foonly/foonver@c0b540fdae9bdbd1c535ee76b05fecec4f0e3551 # v1.1.0
+        with:
+          version: "v1.1.0"
+          command: "auto"
+          changelog: "true"
+          push: "true"
+          prerelease: ${{ github.ref != 'refs/heads/main' }}
+
+      - name: Build Release Binary
+        # Re-build now that the new tag exists, so the version is embedded correctly
+        if: steps.foonver.outputs.is_bumped == 'true'
+        run: |
+          make build VERSION=v${{ steps.foonver.outputs.version }}
+          sha256sum foondot > SHA256SUMS
+
+      - name: Create GitHub Release
+        if: steps.foonver.outputs.is_bumped == 'true'
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
+        with:
+          tag_name: v${{ steps.foonver.outputs.version }}
+          name: Release ${{ steps.foonver.outputs.version }}
+          body: ${{ steps.foonver.outputs.release_notes }}
+          draft: false
+          prerelease: ${{ steps.foonver.outputs.is_prerelease == 'true' }}
+          files: |
+            foondot
+            SHA256SUMS
+
+      - name: Update AUR PKGBUILD
+        if: steps.foonver.outputs.is_bumped == 'true' && steps.foonver.outputs.is_prerelease != 'true'
+        run: ./aur/update-aur.sh ${{ steps.foonver.outputs.version }}
+
+      - name: Publish to AUR
+        if: steps.foonver.outputs.is_bumped == 'true' && steps.foonver.outputs.is_prerelease != 'true'
+        uses: KSXGitHub/github-actions-deploy-aur@da03e160361ce01bf087e790b6ffd196d7dccff7 # v4.1.3
+        with:
+          pkgname: foondot
+          pkgbuild: aur/PKGBUILD
+          commit_username: ${{ secrets.AUR_USERNAME }}
+          commit_email: ${{ secrets.AUR_EMAIL }}
+          ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          commit_message: "Update to v${{ steps.foonver.outputs.version }}"
