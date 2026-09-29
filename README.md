@@ -50,7 +50,7 @@ Creates symlinks from the `source` files/directories in your `dotfiles` director
 
 ### `sync`
 
-Automatically synchronizes your dotfiles repository using Git. It follows a streamlined workflow:
+Automatically synchronizes your dotfiles repository using Git. The `dotfiles` directory must be the top level of its own Git repository, not a subdirectory of a larger one. It follows a streamlined workflow:
 
 1.  **Pull**: Performs a `git pull --rebase --autostash` to integrate remote changes while preserving local modifications.
 2.  **Stage**: Automatically stages all changes in the dotfiles directory (`git add -A`).
@@ -101,4 +101,4 @@ Foondot provides informative error messages in case of issues.
 
 - **Missing Configuration File:** If the main configuration file is missing, an empty one will be generated in `$HOME/.config/foondot.toml`.
 - **Faulty Configuration:** If there are errors in the configuration file (e.g., invalid TOML syntax or unknown keys), Foondot will display an error message explaining the problem.
-- **Git Errors:** The `sync` command will report errors if the directory is not a Git repository or if network/conflict issues occur during push/pull.
+- **Git Errors:** The `sync` command will report errors if the directory is not the top level of a Git repository or if network/conflict issues occur during push/pull.

@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -27,8 +28,8 @@ type Change struct {
 func Sync(cfg config.Config) error {
 	dotfilesDir := path.Join(xdg.Home, cfg.Dotfiles)
 
-	if !isRepo(dotfilesDir) {
-		return fmt.Errorf("directory %s is not a git repository", dotfilesDir)
+	if err := checkRepo(dotfilesDir); err != nil {
+		return err
 	}
 
 	// 1. Pull changes first using rebase and autostash.
@@ -131,21 +132,51 @@ func checkConflictMarkers(dir string, changes []Change) error {
 	return nil
 }
 
-// isRepo determines whether the specified directory path resides within a valid git work tree.
-func isRepo(dir string) bool {
-	cmd := exec.Command("git", "rev-parse", "--is-inside-work-tree")
+// checkRepo returns an error unless the directory is the top level of a git work tree.
+// A subdirectory isn't enough, since sync stages and commits the whole work tree.
+func checkRepo(dir string) error {
+	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
 	cmd.Dir = dir
-	err := cmd.Run()
-	return err == nil
+	out, err := gitOutput(cmd)
+	if err != nil {
+		return fmt.Errorf("directory %s is not a git repository: %w", dir, err)
+	}
+	topLevel := strings.TrimSpace(string(out))
+	// Compare resolved paths, git reports the top level with symlinks resolved.
+	resolvedDir, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return err
+	}
+	resolvedTop, err := filepath.EvalSymlinks(topLevel)
+	if err != nil {
+		return err
+	}
+	if resolvedDir != resolvedTop {
+		return fmt.Errorf("directory %s is inside the git repository %s, but must be the top level of its own repository", dir, topLevel)
+	}
+	return nil
 }
 
 // isRebasing checks if the repository is currently in the middle of a rebase operation.
+// Git is asked for the location of its rebase state, since .git may be a file,
+// e.g. in worktrees and submodules.
 func isRebasing(dir string) bool {
-	rebaseApply := path.Join(dir, ".git", "rebase-apply")
-	rebaseMerge := path.Join(dir, ".git", "rebase-merge")
-	_, errApply := os.Stat(rebaseApply)
-	_, errMerge := os.Stat(rebaseMerge)
-	return !os.IsNotExist(errApply) || !os.IsNotExist(errMerge)
+	cmd := exec.Command("git", "rev-parse", "--git-path", "rebase-merge", "--git-path", "rebase-apply")
+	cmd.Dir = dir
+	out, err := gitOutput(cmd)
+	if err != nil {
+		return false
+	}
+	for statePath := range strings.Lines(string(out)) {
+		statePath = strings.TrimSpace(statePath)
+		if !filepath.IsAbs(statePath) {
+			statePath = filepath.Join(dir, statePath)
+		}
+		if _, err := os.Stat(statePath); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 // getConflictedFiles returns a list of files that currently have merge conflicts.

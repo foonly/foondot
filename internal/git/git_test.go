@@ -277,3 +277,65 @@ func TestGitOutputErrorIncludesStderr(t *testing.T) {
 		t.Errorf("error %q doesn't include git's message", err)
 	}
 }
+
+func TestCheckRepo(t *testing.T) {
+	isolateGit(t)
+	root := t.TempDir()
+	repo := path.Join(root, "repo")
+	run(t, root, "init", "-q", "-b", "main", repo)
+	sub := path.Join(repo, "sub")
+	if err := os.Mkdir(sub, 0755); err != nil {
+		t.Fatal(err)
+	}
+	link := path.Join(root, "link")
+	if err := os.Symlink(repo, link); err != nil {
+		t.Fatal(err)
+	}
+	notRepo := path.Join(root, "plain")
+	if err := os.Mkdir(notRepo, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := checkRepo(repo); err != nil {
+		t.Errorf("top level: unexpected error %v", err)
+	}
+	if err := checkRepo(link); err != nil {
+		t.Errorf("symlink to top level: unexpected error %v", err)
+	}
+	if err := checkRepo(sub); err == nil {
+		t.Error("subdirectory: expected an error")
+	}
+	if err := checkRepo(notRepo); err == nil {
+		t.Error("not a repository: expected an error")
+	}
+}
+
+func TestIsRebasingWorktree(t *testing.T) {
+	isolateGit(t)
+	root := t.TempDir()
+	repo := path.Join(root, "repo")
+	run(t, root, "init", "-q", "-b", "main", repo)
+	commitFile(t, repo, "a", "1\n")
+	commitFile(t, repo, "b", "2\n")
+	worktree := path.Join(root, "worktree")
+	run(t, repo, "worktree", "add", "-q", "-b", "other", worktree)
+
+	if isRebasing(worktree) {
+		t.Fatal("worktree reported as rebasing before starting a rebase")
+	}
+
+	// In a worktree, .git is a file, and the rebase state lives in the main repository.
+	cmd := exec.Command("git", "rebase", "--exec", "false", "HEAD~1")
+	cmd.Dir = worktree
+	if err := cmd.Run(); err == nil {
+		t.Fatal("expected rebase to stop")
+	}
+
+	if !isRebasing(worktree) {
+		t.Error("rebase in worktree not detected")
+	}
+	if isRebasing(repo) {
+		t.Error("main repository reported as rebasing")
+	}
+	run(t, worktree, "rebase", "--abort")
+}
