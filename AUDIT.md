@@ -1,6 +1,6 @@
 # Foondot Code Quality and Security Audit
 
-Audit of foondot 0.12.0 (`59e8ebd`), updated 2026-09-29 after the first round of fixes.
+Audit of foondot 0.12.0 (`59e8ebd`), updated 2026-09-29 after two rounds of fixes.
 
 ## Summary
 
@@ -10,7 +10,7 @@ Foondot is small (about 1,000 lines of Go) and has few dependencies. `go vet` an
 - link cleanup that could remove more than it should
 - a default command that committed and pushed without being asked
 
-Those are fixed in `18b9648`, `89de62f` and `d75ca29`, and the fixes are covered by the first tests in the project. The rest of the findings are still open and listed below by priority.
+These are fixed, together with absolute targets, git output parsing and config checks, and each fix is covered by tests. The remaining open findings are about error handling, structure and the release workflow, and are listed below by priority.
 
 Severity is given for a single-user tool that runs with your own permissions on your own config and dotfiles repository. The config file is trusted input. Repository contents are semi-trusted, because they may come from another machine through `sync`.
 
@@ -18,14 +18,14 @@ Severity is given for a single-user tool that runs with your own permissions on 
 |---|---------|----------|--------|
 | 1 | `manual` strategy aborts the rebase in the wrong directory | High | Fixed `18b9648` |
 | 2 | Conflict resolve loop can hang forever | High | Fixed `18b9648` |
-| 3 | Absolute `target` paths are placed under `$HOME` | High | Open |
+| 3 | Absolute `target` paths are placed under `$HOME` | High | Fixed `f47a1f6` |
 | 4 | Link cleanup removes links it doesn't own or shouldn't remove | High | Fixed `89de62f` |
 | 5 | Running without a command syncs (commits and pushes everything) | High | Fixed `d75ca29` |
 | 6 | Flags after the command are silently ignored | Medium | Fixed `d75ca29` |
 | 7 | Wrong exit codes | Medium | Partly fixed `d75ca29` |
-| 8 | Fragile parsing of git output lets the conflict-marker check be bypassed | Medium | Open |
-| 9 | Filenames passed to git without `--` | Medium | Open |
-| 10 | `sync_strategy` value is not checked | Medium | Open |
+| 8 | Fragile parsing of git output lets the conflict-marker check be bypassed | Medium | Fixed `360630a` |
+| 9 | Filenames passed to git without `--` | Medium | Fixed `360630a` |
+| 10 | `sync_strategy` value is not checked | Medium | Fixed `8da099b` |
 | 11 | Repository detection assumes a plain `.git` folder | Medium | Open |
 | 12 | Garbled output when resolving conflicts | Low | Open |
 | 13 | Filesystem errors are ignored during linking | Medium | Open |
@@ -36,7 +36,7 @@ Severity is given for a single-user tool that runs with your own permissions on 
 | 18 | Tests only cover the fixed areas | Medium | Partly fixed |
 | 19 | Go style issues | Low | Open |
 | 20 | Release workflow | Low | Open |
-| 21 | README is out of date | Low | Partly fixed |
+| 21 | README is out of date | Low | Fixed `d75ca29`, `8da099b` |
 
 ## Fixed
 
@@ -54,6 +54,12 @@ Severity is given for a single-user tool that runs with your own permissions on 
 Errors from `git rebase --continue` were ignored and the loop repeated while a rebase was in progress. If `continue` failed without leaving conflicts behind, the loop never ended. For example, with no git identity configured, the commit fails and the rebase stays stopped. That is a likely state on a freshly set-up machine.
 
 **Fix:** each pass must resolve at least one conflict. Otherwise the last `continue` error is returned. Test: `TestResolveRebaseContinueFails`, which hangs on the old code.
+
+### 3. Absolute `target` paths are placed under `$HOME`
+
+The README and the config comments say `target` can be absolute. But `path.Join(xdg.Home, "/etc/foo")` gives `$HOME/etc/foo`, so an absolute target created directories and a link inside your home directory instead.
+
+**Fix:** a shared `targetPath` helper uses absolute targets as-is, both when linking and during cleanup. Tests: `TestTargetPath`, `TestLinkAbsoluteTarget`.
 
 ### 4. Link cleanup removes links it doesn't own or shouldn't remove
 
@@ -83,15 +89,40 @@ Go's standard `flag` package stops at the first argument that isn't a flag, so `
 
 **Fix:** the remaining arguments are parsed again after the command. Leftover arguments are an error.
 
+### 8. Fragile parsing of git output lets the conflict-marker check be bypassed
+
+- `strings.TrimSpace` on the whole `git status --porcelain` output removed the leading space of the first line. ` M sub` was parsed as status `M` and path `ub`.
+- Git quotes unusual filenames and escapes characters such as non-ASCII ones (e.g. `"\303\244"`). Only the quotes were stripped, so the resulting path didn't exist.
+- `ContainsConflictMarkers` returned `false` when it couldn't read a file. Together with the previous point, files with unusual names skipped the conflict-marker check and could be committed and pushed with conflict markers in them.
+- The same quoting broke `git checkout --theirs` for such files, and the grouping in generated commit messages.
+
+**Fix:**
+
+- `git status` and `git diff` are read with `-z`, and renames carry their old path in a separate field.
+- A file that can't be read now fails the check. Non-regular files, such as submodules and symlinks, are skipped.
+- Markers only count at the start of a line, so a Markdown `=======` heading is no longer reported.
+
+Tests: `TestGetChanges`, `TestCheckConflictMarkers`, `TestContainsConflictMarkers*`, `TestResolveRebaseUnusualFilenames`.
+
+### 9. Filenames passed to git without `--`
+
+`git checkout --theirs <file>` and `git add <file>` took filenames from the repository, so a file whose name starts with `-` was read as an option. Those files can come from another machine through `sync`.
+
+**Fix:** both commands pass `--` before the filename. Test: `TestResolveRebaseUnusualFilenames` (files named `--ours` and `-f`).
+
+### 10. `sync_strategy` value is not checked
+
+Only `manual` and `remote` were compared against. Any other value, including a typo like `remot`, behaved like `local` and silently replaced remote changes with local ones.
+
+**Fix:** values other than `manual`, `local` and `remote` are rejected when the config is loaded. Test: `TestValidateConfigSyncStrategy`.
+
+### 21. README is out of date
+
+The README named `link` as the default in one place and `sync` in another. It didn't document `sync_strategy`, and it still said conflicts always abort.
+
+**Fix:** the README names no default command, documents `sync_strategy` and each strategy, and describes the cleanup, config-error and conflict-marker behaviour.
+
 ## Open
-
-### 3. Absolute `target` paths are placed under `$HOME`
-
-**Where:** `internal/dots/dots.go:109`, `:135`
-
-The README and the config comments say `target` can be absolute. But `path.Join(xdg.Home, "/etc/foo")` gives `$HOME/etc/foo`, so an absolute target creates directories and a link inside your home directory instead.
-
-**Recommendation:** use the target as-is when `filepath.IsAbs(item.Target)` is true. Resolve it the same way in `handleDot` and `cleanTargets`, and put the logic in one shared helper so the two can't drift apart.
 
 ### 7. Wrong exit codes (partly fixed)
 
@@ -101,40 +132,9 @@ Unknown commands and unexpected arguments now exit with 2. `link` still always e
 
 **Recommendation:** have `Link` return an error or a failure count, and exit non-zero when anything failed.
 
-### 8. Fragile parsing of git output lets the conflict-marker check be bypassed
-
-**Where:** `internal/git/git.go:197` (`getChanges`), `internal/utils/file.go:51`, `getConflictedFiles`
-
-- `strings.TrimSpace` on the whole `git status --porcelain` output removes the leading space of the first line. ` M sub` is parsed as status `M` and path `ub`.
-- Git quotes unusual filenames and escapes characters such as non-ASCII ones (e.g. `"\303\244"`). Only the quotes are stripped, so the resulting path doesn't exist.
-- `ContainsConflictMarkers` returns `false` when it can't read a file. Together with the previous point, files with unusual names skip the conflict-marker check and can be committed and pushed with conflict markers in them.
-- The same quoting breaks `git checkout --theirs` for such files, and the grouping in generated commit messages.
-
-**Recommendation:**
-
-- Use `git status --porcelain -z` and `git diff --name-only -z --diff-filter=U`, and split on NUL.
-- Treat unreadable files as a failed check (or report them) instead of as clean.
-- Anchor the marker check to the start of lines, since `=======` alone is common in Markdown and reStructuredText headings.
-
-### 9. Filenames passed to git without `--`
-
-**Where:** `internal/git/git.go:171`, `:177`
-
-`git checkout --theirs <file>` and `git add <file>` take filenames from the repository. A file whose name starts with `-` is read as an option. Those files can come from another machine through `sync`.
-
-**Recommendation:** add `"--"` before the filename in both commands.
-
-### 10. `sync_strategy` value is not checked
-
-**Where:** `internal/git/git.go:132`, `:161`, `internal/config/config.go`
-
-Only `manual` and `remote` are compared against. Any other value, including a typo like `remot`, behaves like `local` and silently replaces remote changes with local ones.
-
-**Recommendation:** reject values other than `manual`, `local` and `remote` when the config is loaded.
-
 ### 11. Repository detection assumes a plain `.git` folder
 
-**Where:** `internal/git/git.go:99` (`isRepo`), `:107` (`isRebasing`)
+**Where:** `internal/git/git.go:105` (`isRepo`), `:113` (`isRebasing`)
 
 - `isRebasing` looks for `<dotfiles>/.git/rebase-*`. That fails for worktrees and submodules, where `.git` is a file, and when the dotfiles folder is a subfolder of a repository. The code then reports "failed to pull" instead of applying the strategy.
 - It also treats any error other than "not found" (e.g. permission denied) as "rebasing".
@@ -147,7 +147,7 @@ Only `manual` and `remote` are compared against. Any other value, including a ty
 
 ### 12. Garbled output when resolving conflicts
 
-**Where:** `internal/git/git.go:170`
+**Where:** `internal/git/git.go:176`, `:37`
 
 `PrintMessage` uses only its first three arguments. `PrintMessage("Auto-resolving conflict in", file, "using", strategy, "version")` prints `Auto-resolving conflict in: <file> => using`. Also, `"...Applying strategy:"` followed by the value prints a double colon.
 
@@ -155,7 +155,7 @@ Only `manual` and `remote` are compared against. Any other value, including a ty
 
 ### 13. Filesystem errors are ignored during linking
 
-**Where:** `internal/dots/dots.go:190`, `:201`, `:224`, `:278`
+**Where:** `internal/dots/dots.go:204`, `:215`, `:238`, `:292`
 
 - If `MkdirAll` fails for the target's parent folder, nothing is reported.
 - The result of `os.Remove(target)` in force mode is not checked.
@@ -178,7 +178,7 @@ Only `manual` and `remote` are compared against. Any other value, including a ty
 
 ### 15. Link tracking file is fragile
 
-**Where:** `internal/config/config.go:134`, `:157`
+**Where:** `internal/config/config.go:155`, `:178`
 
 - Any error reading `dots.json`, not just "file not found", is treated as an empty list. The file is then overwritten and all tracking is lost, so old links are never cleaned up.
 - The write isn't atomic. An interruption can leave broken JSON, which then blocks every later `link`.
@@ -187,7 +187,7 @@ Only `manual` and `remote` are compared against. Any other value, including a ty
 
 ### 16. Git errors carry no detail
 
-**Where:** `internal/git/git.go:248` and other command helpers
+**Where:** `internal/git/git.go:253` and other command helpers
 
 `stageAll`, `commit` and similar helpers discard git's stderr, so a failure shows up as `exit status 1`. For example, a missing git identity is reported only as "failed to commit: exit status 1".
 
@@ -202,11 +202,10 @@ Only `manual` and `remote` are compared against. Any other value, including a ty
 
 ### 18. Tests only cover the fixed areas (partly fixed)
 
-Tests now cover filtering, cleanup, link ownership and the conflict strategies. Still missing:
+Tests now cover filtering, cleanup, link ownership, absolute targets, the conflict strategies, git output parsing, the conflict-marker check and `sync_strategy` validation. Still missing:
 
 - `prepareTargetSource` and `doLink` (moves, `.conflict` naming, force mode)
-- config loading
-- parsing of `git status` output (easier once #8 is done)
+- loading and decoding the config file
 - the `Sync` flow end to end
 - command-line argument handling
 
@@ -230,14 +229,6 @@ Tests now cover filtering, cleanup, link ownership and the conflict strategies. 
 - There is no `go vet` or `go test` step before releasing, and no checksums are published for the binary.
 
 **Recommendation:** read the Go version from `go.mod` (`go-version-file: go.mod`), pin actions to commit SHAs, add vet and test steps, and publish a `SHA256SUMS` file.
-
-### 21. README is out of date (partly fixed)
-
-The README no longer names a default command, and it describes the new cleanup and config-error behaviour. Still missing:
-
-- documentation for `sync_strategy`
-- the statement that conflicts always abort, which is wrong since the sync strategies were added
-- the absolute-target claim, which stays wrong until #3 is fixed
 
 ## Not considered an issue
 
