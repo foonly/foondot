@@ -339,3 +339,95 @@ func TestIsRebasingWorktree(t *testing.T) {
 	}
 	run(t, worktree, "rebase", "--abort")
 }
+
+// syncedClone returns a clone with one pushed commit, and its bare remote.
+func syncedClone(t *testing.T) (local string, remote string) {
+	t.Helper()
+	isolateGit(t)
+	root := t.TempDir()
+	remote = filepath.Join(root, "remote.git")
+	local = filepath.Join(root, "dotfiles")
+	run(t, root, "init", "-q", "--bare", "-b", "main", remote)
+	run(t, root, "clone", "-q", remote, local)
+	if err := os.MkdirAll(filepath.Join(local, "sway"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	commitFile(t, local, "sway/config", "1\n")
+	run(t, local, "push", "-q", "-u", "origin", "main")
+	return local, remote
+}
+
+func writeTestFile(t *testing.T, file, content string) {
+	t.Helper()
+	if err := os.WriteFile(file, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSyncPushesChanges(t *testing.T) {
+	local, remote := syncedClone(t)
+	writeTestFile(t, filepath.Join(local, "sway", "config"), "2\n")
+	writeTestFile(t, filepath.Join(local, "bashrc"), "new\n")
+
+	if err := Sync(local, Options{Strategy: "manual"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := run(t, remote, "log", "-1", "--format=%s"); got != "Updated sway, Added bashrc\n" {
+		t.Errorf("pushed commit message = %q", got)
+	}
+	if got := run(t, local, "status", "--porcelain"); got != "" {
+		t.Errorf("working tree not clean after sync:\n%s", got)
+	}
+}
+
+func TestSyncWithoutChanges(t *testing.T) {
+	local, remote := syncedClone(t)
+	before := run(t, remote, "rev-parse", "HEAD")
+
+	if err := Sync(local, Options{Strategy: "manual"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if after := run(t, remote, "rev-parse", "HEAD"); after != before {
+		t.Error("sync without changes created a commit")
+	}
+}
+
+func TestSyncPullsRemoteChanges(t *testing.T) {
+	local, remote := syncedClone(t)
+	other := filepath.Join(t.TempDir(), "other")
+	run(t, filepath.Dir(other), "clone", "-q", remote, other)
+	commitFile(t, other, "remote-file", "x\n")
+	run(t, other, "push", "-q")
+
+	if err := Sync(local, Options{Strategy: "manual"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := os.Stat(filepath.Join(local, "remote-file")); err != nil {
+		t.Errorf("remote change not pulled: %v", err)
+	}
+}
+
+func TestSyncRefusesConflictMarkers(t *testing.T) {
+	local, remote := syncedClone(t)
+	before := run(t, remote, "rev-parse", "HEAD")
+	writeTestFile(t, filepath.Join(local, "sway", "config"), "<<<<<<< HEAD\na\n=======\nb\n>>>>>>> 1234abc\n")
+
+	err := Sync(local, Options{Strategy: "manual"})
+
+	if err == nil || !strings.Contains(err.Error(), "conflict markers") {
+		t.Errorf("got %v, want a conflict marker error", err)
+	}
+	if after := run(t, remote, "rev-parse", "HEAD"); after != before {
+		t.Error("file with conflict markers was pushed")
+	}
+}
+
+func TestSyncNotARepository(t *testing.T) {
+	isolateGit(t)
+	if err := Sync(t.TempDir(), Options{Strategy: "manual"}); err == nil {
+		t.Error("expected an error outside a repository")
+	}
+}

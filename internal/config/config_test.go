@@ -1,9 +1,12 @@
 package config
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -75,5 +78,89 @@ func TestWriteDotsDataRoundTrip(t *testing.T) {
 	}
 	if !slices.Equal(got, want) {
 		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+func writeConfig(t *testing.T, content string) string {
+	t.Helper()
+	file := filepath.Join(t.TempDir(), "foondot.toml")
+	if err := os.WriteFile(file, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	return file
+}
+
+func TestReadConfig(t *testing.T) {
+	file := writeConfig(t, `
+dotfiles = "dots"
+color = true
+dots = [
+    { source = "bashrc", target = ".bashrc" },
+    { source = "sway", target = ".config/sway", hostname = ["laptop"] },
+]
+`)
+
+	cfg, err := ReadConfig(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if cfg.Dotfiles != "dots" || !cfg.Color {
+		t.Errorf("got %+v", cfg)
+	}
+	if cfg.SyncStrategy != "manual" {
+		t.Errorf("sync_strategy = %q, want default %q", cfg.SyncStrategy, "manual")
+	}
+	if len(cfg.Dots) != 2 || cfg.Dots[1].Target != ".config/sway" || !slices.Equal(cfg.Dots[1].Hostname, []string{"laptop"}) {
+		t.Errorf("dots = %+v", cfg.Dots)
+	}
+	if got := cfg.DotfilesDir("/home/u"); got != "/home/u/dots" {
+		t.Errorf("DotfilesDir = %s", got)
+	}
+}
+
+func TestReadConfigErrors(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    string
+	}{
+		{"unknown key", "dotfiles = \"dotfiles\"\ndot = []\n", "unknown keys"},
+		{"unknown key in dot", "dots = [{ source = \"a\", taget = \"b\" }]\n", "unknown keys"},
+		{"invalid syntax", "dotfiles = \n", "error reading"},
+		{"wrong type", "color = \"yes\"\n", "error reading"},
+		{"invalid strategy", "sync_strategy = \"remot\"\n", "sync_strategy"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := ReadConfig(writeConfig(t, tt.content))
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("got %v, want an error containing %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestReadConfigMissing(t *testing.T) {
+	_, err := ReadConfig(filepath.Join(t.TempDir(), "missing.toml"))
+	if !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("got %v, want fs.ErrNotExist", err)
+	}
+}
+
+func TestCreateDefaultConfig(t *testing.T) {
+	// The config folder doesn't exist yet and must be created.
+	file := filepath.Join(t.TempDir(), "config", "foondot.toml")
+
+	if err := CreateDefaultConfig(file); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := ReadConfig(file)
+	if err != nil {
+		t.Fatalf("default config can't be read back: %v", err)
+	}
+	if cfg.Dotfiles != "dotfiles" || cfg.SyncStrategy != "manual" || len(cfg.Dots) != 0 {
+		t.Errorf("got %+v", cfg)
 	}
 }
