@@ -11,16 +11,25 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      # Actions are pinned to commits, since tags can be moved.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
-          go-version: 1.22.x
-      - name: Install dependencies
-        run: go get .
+          go-version-file: go.mod
+      - name: Download dependencies
+        run: go mod download
+      - name: Vet
+        run: go vet ./...
+      - name: Test
+        run: go test ./...
       - name: Build executable
-        run: go build -v -ldflags="-X main.version=${{github.ref_name}}"
+        env:
+          CGO_ENABLED: "0"
+        run: go build -v -trimpath -ldflags="-X main.version=${{github.ref_name}}"
+      - name: Create checksums
+        run: sha256sum foondot > SHA256SUMS
       - name: Create Release
-        uses: ncipollo/release-action@v1
+        uses: ncipollo/release-action@339a81892b84b4eeb0f6e744e4574d79d0d9b8dd # v1.21.0
         with:
-          artifacts: "foondot"
+          artifacts: "foondot,SHA256SUMS"
