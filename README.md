@@ -17,6 +17,9 @@ dotfiles = "dotfiles"
 # Enable color output
 color = false
 
+# Strategy for resolving git conflicts (manual, local, remote)
+sync_strategy = "manual"
+
 # A dot entry representing a symlink, `source` is relative to `dotfiles`
 # and `target` shall be relative to $HOME directory or absolute.
 dots = [
@@ -29,6 +32,7 @@ dots = [
 
 - `dotfiles`: (String, required) The path to your dotfiles directory, relative to your `$HOME` directory. This directory should contain the source files and directories that you want to symlink.
 - `color`: (Boolean, optional) Enable color output in the console. Defaults to `false`.
+- `sync_strategy`: (String, optional) How `sync` resolves conflicts when pulling. One of `manual`, `local` or `remote`. Defaults to `manual`.
 - `dots`: (Array of Tables, required) An array of dot entries, where each entry defines a symlink.
   - `source`: (String, required) The path to the source file or directory within your `dotfiles` directory, relative to the `dotfiles` path. If the source path ends in /\*, the individual files in the folder are linked separately.
   - `target`: (String, required) The target path for the symlink. This can be either relative to your `$HOME` directory or an absolute path.
@@ -53,7 +57,13 @@ Automatically synchronizes your dotfiles repository using Git. It follows a stre
 3.  **Commit**: Generates a "smart" commit message based on the changed top-level folders and files (e.g., `Updated sway and mako, Added alacritty`).
 4.  **Push**: Pushes the local commits to the remote tracking branch.
 
-If a merge conflict occurs during the sync process, Foondot will abort and notify you to resolve it manually.
+If a conflict occurs while pulling, Foondot applies the configured `sync_strategy`:
+
+- `manual`: Abort the rebase and let you resolve the conflict yourself.
+- `local`: Keep your local version of each conflicted file.
+- `remote`: Keep the remote version of each conflicted file.
+
+Before committing, Foondot also refuses to sync if any changed file contains git conflict markers.
 
 ## Usage
 

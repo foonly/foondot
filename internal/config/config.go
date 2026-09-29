@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path"
 
@@ -88,7 +89,27 @@ func ReadConfig(configFile string) Config {
 		cfg.SyncStrategy = "manual"
 	}
 
+	if err := validateConfig(cfg); err != nil {
+		utils.PrintError("Invalid config file", configFile, err.Error())
+		os.Exit(2)
+	}
+
 	return cfg
+}
+
+/**
+ * Checks configuration values that can't be expressed in the TOML types.
+ *
+ * @param cfg The parsed configuration struct.
+ * @return error Describes the first invalid value, nil if the config is valid.
+ */
+func validateConfig(cfg Config) error {
+	switch cfg.SyncStrategy {
+	case "manual", "local", "remote":
+	default:
+		return fmt.Errorf("sync_strategy must be 'manual', 'local' or 'remote', got '%s'", cfg.SyncStrategy)
+	}
+	return nil
 }
 
 /**
