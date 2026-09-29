@@ -2,7 +2,7 @@ package config
 
 import (
 	"os"
-	"path"
+	"path/filepath"
 	"slices"
 	"testing"
 )
@@ -20,33 +20,60 @@ func TestValidateConfigSyncStrategy(t *testing.T) {
 	}
 }
 
-func TestReadDotsData(t *testing.T) {
-	dir := t.TempDir()
+func writeDotsData(t *testing.T, dataDir, content string) {
+	t.Helper()
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, dotsDataFileName), []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+}
 
-	got, err := readDotsData(path.Join(dir, "missing.json"))
+func TestReadDotsData(t *testing.T) {
+	root := t.TempDir()
+
+	got, err := ReadDotsData(filepath.Join(root, "missing"))
 	if err != nil || len(got) != 0 {
 		t.Errorf("missing file: got (%v, %v), want empty list", got, err)
 	}
 
-	valid := path.Join(dir, "valid.json")
-	if err := os.WriteFile(valid, []byte(`["/a","/b"]`), 0644); err != nil {
-		t.Fatal(err)
-	}
-	got, err = readDotsData(valid)
+	valid := filepath.Join(root, "valid")
+	writeDotsData(t, valid, `["/a","/b"]`)
+	got, err = ReadDotsData(valid)
 	if err != nil || !slices.Equal(got, []string{"/a", "/b"}) {
 		t.Errorf("valid file: got (%v, %v)", got, err)
 	}
 
-	broken := path.Join(dir, "broken.json")
-	if err := os.WriteFile(broken, []byte(`["/a",`), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := readDotsData(broken); err == nil {
+	broken := filepath.Join(root, "broken")
+	writeDotsData(t, broken, `["/a",`)
+	if _, err := ReadDotsData(broken); err == nil {
 		t.Error("broken file: expected an error")
 	}
 
 	// A directory can't be read as a file, which must not count as missing.
-	if _, err := readDotsData(dir); err == nil {
+	unreadable := filepath.Join(root, "unreadable")
+	if err := os.MkdirAll(filepath.Join(unreadable, dotsDataFileName), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadDotsData(unreadable); err == nil {
 		t.Error("unreadable file: expected an error")
+	}
+}
+
+func TestWriteDotsDataRoundTrip(t *testing.T) {
+	// The data folder doesn't exist yet and must be created.
+	dataDir := filepath.Join(t.TempDir(), "foondot")
+	want := []string{"/home/u/.bashrc", "/etc/foo"}
+
+	if err := WriteDotsData(dataDir, want); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ReadDotsData(dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("got %v, want %v", got, want)
 	}
 }

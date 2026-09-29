@@ -2,7 +2,7 @@ package utils
 
 import (
 	"os"
-	"path"
+	"path/filepath"
 	"testing"
 )
 
@@ -22,7 +22,7 @@ func TestContainsConflictMarkers(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			file := path.Join(t.TempDir(), "file")
+			file := filepath.Join(t.TempDir(), "file")
 			if err := os.WriteFile(file, []byte(tt.content), 0644); err != nil {
 				t.Fatal(err)
 			}
@@ -39,8 +39,8 @@ func TestContainsConflictMarkers(t *testing.T) {
 
 func TestContainsConflictMarkersNotRegular(t *testing.T) {
 	dir := t.TempDir()
-	link := path.Join(dir, "link")
-	if err := os.Symlink(path.Join(dir, "missing"), link); err != nil {
+	link := filepath.Join(dir, "link")
+	if err := os.Symlink(filepath.Join(dir, "missing"), link); err != nil {
 		t.Fatal(err)
 	}
 
@@ -53,14 +53,14 @@ func TestContainsConflictMarkersNotRegular(t *testing.T) {
 }
 
 func TestContainsConflictMarkersMissing(t *testing.T) {
-	if _, err := ContainsConflictMarkers(path.Join(t.TempDir(), "missing")); err == nil {
+	if _, err := ContainsConflictMarkers(filepath.Join(t.TempDir(), "missing")); err == nil {
 		t.Error("expected an error for a missing file")
 	}
 }
 
 func TestWriteFileAtomic(t *testing.T) {
 	dir := t.TempDir()
-	file := path.Join(dir, "data.json")
+	file := filepath.Join(dir, "data.json")
 	if err := os.WriteFile(file, []byte("old"), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -94,16 +94,16 @@ func TestWriteFileAtomic(t *testing.T) {
 
 func TestWriteFileAtomicFailureKeepsOldFile(t *testing.T) {
 	dir := t.TempDir()
-	file := path.Join(dir, "data.json")
+	file := filepath.Join(dir, "data.json")
 	if err := os.WriteFile(file, []byte("old"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	// The target is a directory now, so the rename fails.
-	target := path.Join(dir, "sub")
+	target := filepath.Join(dir, "sub")
 	if err := os.Mkdir(target, 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path.Join(target, "x"), nil, 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(target, "x"), nil, 0644); err != nil {
 		t.Fatal(err)
 	}
 

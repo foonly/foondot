@@ -7,16 +7,13 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"path"
+	"path/filepath"
 
 	"foonly.dev/foondot/internal/utils"
 	"github.com/adrg/xdg"
 	"github.com/pelletier/go-toml/v2"
 )
 
-/**
- * Constants
- */
 const (
 	DefaultConfigFileName = "foondot.toml"
 	dataFolderName        = "foondot"
@@ -24,28 +21,17 @@ const (
 	backupFolderName      = "backup"
 )
 
-/**
- * Item represents a single dotfile symlink configuration.
- *
- * Fields:
- *   Source:   The path to the source file, relative to the dotfiles directory.
- *   Target:   The path to the target location, either relative to $HOME or absolute.
- *   Hostname: A slice of hostnames for which this symlink should be applied. If empty, applies to all hosts.
- */
+// Item represents a single dotfile symlink configuration.
 type Item struct {
-	Source   string
-	Target   string
+	// Source is the path to the source file, relative to the dotfiles directory.
+	Source string
+	// Target is the path to the target location, either relative to $HOME or absolute.
+	Target string
+	// Hostname lists the hosts this symlink applies to. If empty, it applies to all hosts.
 	Hostname []string
 }
 
-/**
- * Config represents the application's configuration settings.
- *
- * Fields:
- *   Dotfiles: Path to the user's dotfiles directory, relative to $HOME.
- *   Color:    Whether to enable color output in the application's messages.
- *   Dots:     A slice of Item structs, each representing a dotfile symlink configuration.
- */
+// Config represents the application's configuration settings.
 type Config struct {
 	Dotfiles     string `toml:"dotfiles"      comment:"Path to your dotfiles relative to your $HOME directory"`
 	Color        bool   `toml:"color"         comment:"Enable color output"`
@@ -53,38 +39,28 @@ type Config struct {
 	Dots         []Item `toml:"dots"          comment:"A dot entry representing a symlink, 'source' is relative to 'dotfiles'\nand 'target' shall be relative to $HOME directory or absolute.\nExample:\ndots = [{source = 'bash/bashrc', target = '.bashrc'}]"`
 }
 
-var Hostname = "unknown"
-var Version = "undefined"
-var DotsData = []string{}
+// DotfilesDir returns the absolute path to the dotfiles directory.
+func (c Config) DotfilesDir(home string) string {
+	return filepath.Join(home, c.Dotfiles)
+}
 
-/**
- * Reads the configuration from the specified TOML config file.
- * Exits the program with an error message if the file cannot be read or parsed.
- *
- * @param configFile The path to the configuration file.
- * @return Config The parsed configuration struct.
- */
-func ReadConfig(configFile string) Config {
-
+// ReadConfig reads and validates the configuration from a TOML file.
+// Unknown keys are rejected, since a typo could otherwise leave the dots list
+// empty and cause every link to be removed.
+func ReadConfig(configFile string) (Config, error) {
 	data, err := os.ReadFile(configFile)
 	if err != nil {
-		utils.PrintError("Config file not found in", configFile)
-		os.Exit(1)
+		return Config{}, err
 	}
 
 	var cfg Config
-
-	// Reading from a TOML file. Unknown keys are rejected, since a typo could
-	// otherwise leave the dots list empty and cause every link to be removed.
 	err = toml.NewDecoder(bytes.NewReader(data)).DisallowUnknownFields().Decode(&cfg)
 	if err != nil {
 		var strictErr *toml.StrictMissingError
 		if errors.As(err, &strictErr) {
-			utils.PrintError("Unknown keys in TOML file", configFile, strictErr.String())
-		} else {
-			utils.PrintError("Error reading TOML file", configFile, err.Error())
+			return Config{}, fmt.Errorf("unknown keys in %s:\n%s", configFile, strictErr.String())
 		}
-		os.Exit(2)
+		return Config{}, fmt.Errorf("error reading %s: %w", configFile, err)
 	}
 
 	if cfg.SyncStrategy == "" {
@@ -92,19 +68,13 @@ func ReadConfig(configFile string) Config {
 	}
 
 	if err := validateConfig(cfg); err != nil {
-		utils.PrintError("Invalid config file", configFile, err.Error())
-		os.Exit(2)
+		return Config{}, fmt.Errorf("invalid config file %s: %w", configFile, err)
 	}
 
-	return cfg
+	return cfg, nil
 }
 
-/**
- * Checks configuration values that can't be expressed in the TOML types.
- *
- * @param cfg The parsed configuration struct.
- * @return error Describes the first invalid value, nil if the config is valid.
- */
+// validateConfig checks configuration values that can't be expressed in the TOML types.
 func validateConfig(cfg Config) error {
 	switch cfg.SyncStrategy {
 	case "manual", "local", "remote":
@@ -114,13 +84,9 @@ func validateConfig(cfg Config) error {
 	return nil
 }
 
-/**
- * Creates a default configuration file at the specified path.
- * If the file cannot be created or written, the program exits with an error message.
- *
- * @param configFile The path where the default configuration file will be created.
- */
-func CreateDefaultConfig(configFile string) {
+// CreateDefaultConfig writes a default configuration file, creating its
+// directory if needed.
+func CreateDefaultConfig(configFile string) error {
 	defaultConfig := Config{
 		Dotfiles:     "dotfiles",
 		Color:        false,
@@ -128,48 +94,35 @@ func CreateDefaultConfig(configFile string) {
 		Dots:         []Item{},
 	}
 
-	utils.PrintMessage("Creating config file in", configFile)
+	utils.PrintValue("Creating config file in", configFile)
 
 	data, err := toml.Marshal(defaultConfig)
 	if err != nil {
-		utils.PrintError("Error marshaling default config", err.Error())
-		os.Exit(3)
+		return err
 	}
-
-	err = os.WriteFile(configFile, data, 0644)
-	if err != nil {
-		utils.PrintError("Error writing default config", configFile, err.Error())
-		os.Exit(4)
+	if err := os.MkdirAll(filepath.Dir(configFile), 0755); err != nil {
+		return err
 	}
+	return os.WriteFile(configFile, data, 0644)
 }
 
-/**
- * Reads the dots data from the JSON file specified by dotsDataFileName.
- * If the file does not exist, the function returns without error.
- * If the file exists but cannot be read or parsed, the program exits with an error message.
- * Continuing would overwrite the file and lose track of all links.
- *
- * The dots data is unmarshaled into the global variable dotsData.
- */
-func ReadDotsData() {
-	filename := getDataFilename(dotsDataFileName)
-	dotsData, err := readDotsData(filename)
-	if err != nil {
-		utils.PrintError("Error reading dots data", filename, err.Error())
-		os.Exit(2)
-	}
-	DotsData = dotsData
+// DataDir returns the folder for foondot's data, such as the tracked links
+// and backups. The folder is not created.
+func DataDir() string {
+	return filepath.Join(xdg.DataHome, dataFolderName)
 }
 
-/**
- * Reads a dots data file. A missing file is not an error and gives an empty list.
- *
- * @param filename The path to the dots data file.
- * @return []string The tracked link targets.
- * @return error Set if the file exists but can't be read or parsed.
- */
-func readDotsData(filename string) ([]string, error) {
-	data, err := os.ReadFile(filename)
+// BackupDir returns the folder inside dataDir where targets are backed up
+// when forcing a relink. The folder is not created.
+func BackupDir(dataDir string) string {
+	return filepath.Join(dataDir, backupFolderName)
+}
+
+// ReadDotsData reads the list of tracked link targets from dataDir.
+// A missing file is not an error and gives an empty list. Any other error is
+// returned, since continuing would overwrite the file and lose track of all links.
+func ReadDotsData(dataDir string) ([]string, error) {
+	data, err := os.ReadFile(filepath.Join(dataDir, dotsDataFileName))
 	if errors.Is(err, fs.ErrNotExist) {
 		return []string{}, nil
 	} else if err != nil {
@@ -182,53 +135,15 @@ func readDotsData(filename string) ([]string, error) {
 	return dotsData, nil
 }
 
-/**
- * Writes the current dots data to the JSON file specified by dotsDataFileName.
- * If the data cannot be marshaled or written, the program exits with an error message.
- *
- * The dots data is marshaled from the global variable dotsData.
- */
-func WriteDotsData() {
-	filename := getDataFilename(dotsDataFileName)
-	data, err := json.Marshal(DotsData)
+// WriteDotsData writes the list of tracked link targets to dataDir, creating
+// the folder if needed. The file is replaced atomically.
+func WriteDotsData(dataDir string, dotsData []string) error {
+	data, err := json.Marshal(dotsData)
 	if err != nil {
-		utils.PrintError("Error marshaling dots data", err.Error())
-		os.Exit(3)
+		return err
 	}
-
-	err = utils.WriteFileAtomic(filename, data, 0644)
-	if err != nil {
-		utils.PrintError("Error writing dots data", filename, err.Error())
-		os.Exit(4)
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		return err
 	}
-}
-
-/**
- * Returns the folder where targets are backed up when forcing a relink.
- * The folder is not created.
- *
- * @return string The full path to the backup folder.
- */
-func BackupFolder() string {
-	return path.Join(xdg.DataHome, dataFolderName, backupFolderName)
-}
-
-/**
- * Returns the full path to a data file within the application's data directory.
- * If the data directory does not exist, it is created.
- *
- * @param filename The name of the data file.
- * @return string The full path to the data file within the data directory.
- */
-func getDataFilename(filename string) string {
-	dataFolder := path.Join(xdg.DataHome, dataFolderName)
-	if utils.GetType(dataFolder) == utils.NotExists {
-		err := os.MkdirAll(dataFolder, 0755)
-		if err != nil {
-			utils.PrintError("Error creating data folder", dataFolder, err.Error())
-			os.Exit(5)
-		}
-	}
-
-	return path.Join(dataFolder, filename)
+	return utils.WriteFileAtomic(filepath.Join(dataDir, dotsDataFileName), data, 0644)
 }

@@ -5,6 +5,8 @@ import (
 	"os"
 )
 
+// Color enables colored output. It is a process-wide output setting, set once
+// from the command line or config before anything is printed.
 var Color = false
 
 const (
@@ -14,56 +16,56 @@ const (
 	colorYellow = "\033[0;33m"
 )
 
-/**
- * Prints a formatted message to the console.
- * If three or more strings are provided, prints in the format: "<prefix>: <value> => <result>".
- * If two strings are provided, prints in the format: "<prefix>: <value>".
- * If one string is provided, prints just that string.
- * If the global 'color' variable is true, applies color formatting to the output.
- */
-func PrintMessage(text ...string) {
-	if len(text) >= 3 {
-		if Color {
-			fmt.Fprintf(os.Stdout, "%s: %s%s%s => %s%s%s\n", text[0], colorGreen, text[1], colorNone, colorYellow, text[2], colorNone)
-		} else {
-			fmt.Fprintf(os.Stdout, "%s: %s => %s\n", text[0], text[1], text[2])
-		}
-	} else if len(text) == 2 {
-		if Color {
-			fmt.Fprintf(os.Stdout, "%s: %s%s%s\n", text[0], colorYellow, text[1], colorNone)
-		} else {
-			fmt.Fprintf(os.Stdout, "%s: %s\n", text[0], text[1])
-		}
+// PrintMessage prints a plain message to standard output.
+func PrintMessage(text string) {
+	fmt.Fprintf(os.Stdout, "%s\n", text)
+}
+
+// PrintValue prints a message with a highlighted value to standard output,
+// in the format "<label>: <value>".
+func PrintValue(label, value string) {
+	if Color {
+		fmt.Fprintf(os.Stdout, "%s: %s%s%s\n", label, colorYellow, value, colorNone)
 	} else {
-		fmt.Fprintf(os.Stdout, "%s\n", text[0])
+		fmt.Fprintf(os.Stdout, "%s: %s\n", label, value)
 	}
 }
 
-/**
- * Prints a formatted error message to the standard error stream.
- * If three or more strings are provided, prints in the format: "<prefix>: <value>\n<error message>".
- * If two strings are provided, prints in the format: "<prefix>: <value>".
- * If one string is provided, prints just that string.
- * If the global 'color' variable is true, applies color formatting to the output.
- */
-func PrintError(text ...string) {
-	if len(text) >= 3 {
-		if Color {
-			fmt.Fprintf(os.Stderr, "%s%s: %s%s%s\n%s\n", colorRed, text[0], colorYellow, text[1], colorNone, text[2])
-		} else {
-			fmt.Fprintf(os.Stderr, "%s: %s\n%s\n", text[0], text[1], text[2])
-		}
-	} else if len(text) == 2 {
-		if Color {
-			fmt.Fprintf(os.Stderr, "%s%s: %s%s%s\n", colorRed, text[0], colorYellow, text[1], colorNone)
-		} else {
-			fmt.Fprintf(os.Stderr, "%s: %s\n", text[0], text[1])
-		}
+// PrintChange prints a message about something changing from one value to
+// another to standard output, in the format "<label>: <from> => <to>".
+func PrintChange(label, from, to string) {
+	if Color {
+		fmt.Fprintf(os.Stdout, "%s: %s%s%s => %s%s%s\n", label, colorGreen, from, colorNone, colorYellow, to, colorNone)
 	} else {
-		if Color {
-			fmt.Fprintf(os.Stderr, "%s%s\n", colorRed, text[0])
-		} else {
-			fmt.Fprintf(os.Stderr, "%s\n", text[0])
-		}
+		fmt.Fprintf(os.Stdout, "%s: %s => %s\n", label, from, to)
+	}
+}
+
+// PrintWarning prints a message without a value to standard error.
+func PrintWarning(text string) {
+	if Color {
+		fmt.Fprintf(os.Stderr, "%s%s%s\n", colorRed, text, colorNone)
+	} else {
+		fmt.Fprintf(os.Stderr, "%s\n", text)
+	}
+}
+
+// PrintError prints an error message with a highlighted value to standard
+// error, in the format "<label>: <value>".
+func PrintError(label, value string) {
+	if Color {
+		fmt.Fprintf(os.Stderr, "%s%s: %s%s%s\n", colorRed, label, colorYellow, value, colorNone)
+	} else {
+		fmt.Fprintf(os.Stderr, "%s: %s\n", label, value)
+	}
+}
+
+// PrintErrorCause prints an error message with a highlighted value and the
+// underlying error on the next line to standard error.
+func PrintErrorCause(label, value string, cause error) {
+	if Color {
+		fmt.Fprintf(os.Stderr, "%s%s: %s%s%s\n%s\n", colorRed, label, colorYellow, value, colorNone, cause)
+	} else {
+		fmt.Fprintf(os.Stderr, "%s: %s\n%s\n", label, value, cause)
 	}
 }

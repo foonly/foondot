@@ -3,7 +3,7 @@ package git
 import (
 	"os"
 	"os/exec"
-	"path"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -15,7 +15,7 @@ func isolateGit(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not installed")
 	}
-	globalConfig := path.Join(t.TempDir(), "gitconfig")
+	globalConfig := filepath.Join(t.TempDir(), "gitconfig")
 	if err := os.WriteFile(globalConfig, nil, 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +41,7 @@ func run(t *testing.T, dir string, args ...string) string {
 
 func commitFile(t *testing.T, dir, name, content string) {
 	t.Helper()
-	if err := os.WriteFile(path.Join(dir, name), []byte(content), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
 	run(t, dir, "add", "--", name)
@@ -69,9 +69,9 @@ func conflictingCloneFile(t *testing.T, name string) string {
 	t.Helper()
 	isolateGit(t)
 	root := t.TempDir()
-	remote := path.Join(root, "remote.git")
-	local := path.Join(root, "local")
-	other := path.Join(root, "other")
+	remote := filepath.Join(root, "remote.git")
+	local := filepath.Join(root, "local")
+	other := filepath.Join(root, "other")
 
 	run(t, root, "init", "--bare", "-b", "main", remote)
 	run(t, root, "clone", remote, local)
@@ -106,7 +106,7 @@ func TestResolveRebaseManualAbortsInRepo(t *testing.T) {
 	if isRebasing(local) {
 		t.Error("rebase was not aborted in the dotfiles repository")
 	}
-	if got := readFile(t, path.Join(local, "file")); got != "local\n" {
+	if got := readFile(t, filepath.Join(local, "file")); got != "local\n" {
 		t.Errorf("file = %q, want local content restored", got)
 	}
 }
@@ -121,7 +121,7 @@ func TestResolveRebaseLocal(t *testing.T) {
 	if isRebasing(local) {
 		t.Error("still rebasing")
 	}
-	if got := readFile(t, path.Join(local, "file")); got != "local\n" {
+	if got := readFile(t, filepath.Join(local, "file")); got != "local\n" {
 		t.Errorf("file = %q, want %q", got, "local\n")
 	}
 }
@@ -136,7 +136,7 @@ func TestResolveRebaseRemote(t *testing.T) {
 	if isRebasing(local) {
 		t.Error("still rebasing")
 	}
-	if got := readFile(t, path.Join(local, "file")); got != "remote\n" {
+	if got := readFile(t, filepath.Join(local, "file")); got != "remote\n" {
 		t.Errorf("file = %q, want %q", got, "remote\n")
 	}
 }
@@ -174,7 +174,7 @@ func TestResolveRebaseUnusualFilenames(t *testing.T) {
 			if isRebasing(local) {
 				t.Error("still rebasing")
 			}
-			if got := readFile(t, path.Join(local, name)); got != "local\n" {
+			if got := readFile(t, filepath.Join(local, name)); got != "local\n" {
 				t.Errorf("file = %q, want %q", got, "local\n")
 			}
 		})
@@ -190,7 +190,7 @@ func TestGetChanges(t *testing.T) {
 	commitFile(t, dir, "deleted", "1\n")
 
 	for name, content := range map[string]string{"modified": "2\n", "ä added": "new\n", " leading": "x\n"} {
-		if err := os.WriteFile(path.Join(dir, name), []byte(content), 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0644); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -224,7 +224,7 @@ func TestCheckConflictMarkers(t *testing.T) {
 	dir := t.TempDir()
 	name := "ä file"
 	conflict := "<<<<<<< HEAD\na\n=======\nb\n>>>>>>> 1234abc\n"
-	if err := os.WriteFile(path.Join(dir, name), []byte(conflict), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(conflict), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -243,7 +243,7 @@ func TestCommitErrorIncludesGitMessage(t *testing.T) {
 	isolateGit(t)
 	dir := t.TempDir()
 	run(t, dir, "init", "-b", "main")
-	if err := os.WriteFile(path.Join(dir, "file"), []byte("x\n"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "file"), []byte("x\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	if err := stageAll(dir); err != nil {
@@ -281,17 +281,17 @@ func TestGitOutputErrorIncludesStderr(t *testing.T) {
 func TestCheckRepo(t *testing.T) {
 	isolateGit(t)
 	root := t.TempDir()
-	repo := path.Join(root, "repo")
+	repo := filepath.Join(root, "repo")
 	run(t, root, "init", "-q", "-b", "main", repo)
-	sub := path.Join(repo, "sub")
+	sub := filepath.Join(repo, "sub")
 	if err := os.Mkdir(sub, 0755); err != nil {
 		t.Fatal(err)
 	}
-	link := path.Join(root, "link")
+	link := filepath.Join(root, "link")
 	if err := os.Symlink(repo, link); err != nil {
 		t.Fatal(err)
 	}
-	notRepo := path.Join(root, "plain")
+	notRepo := filepath.Join(root, "plain")
 	if err := os.Mkdir(notRepo, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -313,11 +313,11 @@ func TestCheckRepo(t *testing.T) {
 func TestIsRebasingWorktree(t *testing.T) {
 	isolateGit(t)
 	root := t.TempDir()
-	repo := path.Join(root, "repo")
+	repo := filepath.Join(root, "repo")
 	run(t, root, "init", "-q", "-b", "main", repo)
 	commitFile(t, repo, "a", "1\n")
 	commitFile(t, repo, "b", "2\n")
-	worktree := path.Join(root, "worktree")
+	worktree := filepath.Join(root, "worktree")
 	run(t, repo, "worktree", "add", "-q", "-b", "other", worktree)
 
 	if isRebasing(worktree) {

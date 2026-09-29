@@ -2,31 +2,29 @@ package utils
 
 import (
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 )
 
-/**
- * File types.
- */
+// FileType is the kind of filesystem entry at a path, see GetType.
+type FileType int
+
+// File types returned by GetType.
 const (
-	IsFailed = iota
+	IsFailed FileType = iota
 	NotExists
 	IsSymlink
 	IsDirectory
 	IsFile
 )
 
-/**
- * Determines the type of a file or directory.
- *
- * @param fileName The path to the file or directory.
- * @return An integer representing the file type (notExists, isSymlink, isDirectory, isFile, isFailed).
- */
-func GetType(fileName string) int {
+// GetType determines the type of a file or directory without following
+// symlinks. It returns IsFailed if the path can't be examined.
+func GetType(fileName string) FileType {
 	stat, err := os.Lstat(fileName)
-	if errors.Is(err, os.ErrNotExist) {
+	if errors.Is(err, fs.ErrNotExist) {
 		return NotExists
 	} else if err != nil {
 		return IsFailed
@@ -40,15 +38,9 @@ func GetType(fileName string) int {
 	return IsFile
 }
 
-/**
- * Writes data to a file by writing a temporary file in the same directory and
- * renaming it over the target, so the file is never left partially written.
- *
- * @param filename The path to the file.
- * @param data The data to write.
- * @param perm The permissions of the file.
- * @return error Set if the file couldn't be written.
- */
+// WriteFileAtomic writes data to a file by writing a temporary file in the
+// same directory and renaming it over the target, so the file is never left
+// partially written.
 func WriteFileAtomic(filename string, data []byte, perm os.FileMode) error {
 	tmp, err := os.CreateTemp(filepath.Dir(filename), "."+filepath.Base(filename)+".*.tmp")
 	if err != nil {
@@ -74,16 +66,11 @@ func WriteFileAtomic(filename string, data []byte, perm os.FileMode) error {
 	return os.Rename(tmp.Name(), filename)
 }
 
-/**
- * Checks if a file contains git conflict markers. Only lines starting with a
- * complete set of markers count, so text like a Markdown "=======" heading
- * isn't reported. Anything other than a regular file (symlinks, directories
- * such as submodules) is not checked.
- *
- * @param filePath The path to the file.
- * @return bool True if conflict markers are found, false otherwise.
- * @return error Set if the file could not be read.
- */
+// ContainsConflictMarkers checks if a file contains git conflict markers.
+// Only lines starting with a complete set of markers count, so text like a
+// Markdown "=======" heading isn't reported. Anything other than a regular
+// file (symlinks, directories such as submodules) is not checked. An error is
+// returned if the file can't be read.
 func ContainsConflictMarkers(filePath string) (bool, error) {
 	stat, err := os.Lstat(filePath)
 	if err != nil {
@@ -111,10 +98,8 @@ func ContainsConflictMarkers(filePath string) (bool, error) {
 	return start && middle && end, nil
 }
 
-/**
- * Checks if a line is a git conflict marker, i.e. the marker alone or followed
- * by a space and a label, such as "<<<<<<< HEAD".
- */
+// isMarker checks if a line is a git conflict marker, i.e. the marker alone or
+// followed by a space and a label, such as "<<<<<<< HEAD".
 func isMarker(line string, marker string) bool {
 	rest, ok := strings.CutPrefix(line, marker)
 	return ok && (rest == "" || rest[0] == ' ')

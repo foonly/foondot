@@ -5,14 +5,11 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path"
 	"path/filepath"
 	"sort"
 	"strings"
 
-	"foonly.dev/foondot/internal/config"
 	"foonly.dev/foondot/internal/utils"
-	"github.com/adrg/xdg"
 )
 
 // Change represents a file modification, addition, deletion, or rename within the git repository.
@@ -22,12 +19,16 @@ type Change struct {
 	OldPath string // Original path for renames and copies, relative to repo root
 }
 
+// Options control how Sync works.
+type Options struct {
+	// Strategy resolves conflicts when pulling: "manual", "local" or "remote".
+	Strategy string
+}
+
 // Sync orchestrates the automatic synchronization process for the dotfiles directory.
 // It pulls remote changes with rebase, stages local modifications, creates a contextual commit message,
 // and pushes the resulting commit back to the remote repository.
-func Sync(cfg config.Config) error {
-	dotfilesDir := path.Join(xdg.Home, cfg.Dotfiles)
-
+func Sync(dotfilesDir string, opts Options) error {
 	if err := checkRepo(dotfilesDir); err != nil {
 		return err
 	}
@@ -36,8 +37,8 @@ func Sync(cfg config.Config) error {
 	// This ensures we have the latest remote changes and helps avoid merge commits.
 	if err := pull(dotfilesDir); err != nil {
 		if isRebasing(dotfilesDir) {
-			utils.PrintMessage("Conflicts detected during pull. Applying strategy", cfg.SyncStrategy)
-			if err := resolveRebase(dotfilesDir, cfg.SyncStrategy); err != nil {
+			utils.PrintValue("Conflicts detected during pull. Applying strategy", opts.Strategy)
+			if err := resolveRebase(dotfilesDir, opts.Strategy); err != nil {
 				return fmt.Errorf("failed to resolve conflicts: %w. Please resolve manually", err)
 			}
 		} else {
@@ -45,7 +46,7 @@ func Sync(cfg config.Config) error {
 		}
 	}
 
-	utils.PrintMessage("Checking for changes in", dotfilesDir)
+	utils.PrintValue("Checking for changes in", dotfilesDir)
 
 	// 2. Stage all changes before generating the status.
 	// This ensures untracked files are included and represented correctly in the porcelain output.
@@ -70,7 +71,7 @@ func Sync(cfg config.Config) error {
 
 	// 3. Generate a human-readable commit message based on the staged changes.
 	message := generateCommitMessage(dotfilesDir, changes)
-	utils.PrintMessage("Committing", message)
+	utils.PrintValue("Committing", message)
 	if err := commit(dotfilesDir, message); err != nil {
 		return fmt.Errorf("failed to commit: %w", err)
 	}
@@ -121,7 +122,7 @@ func checkConflictMarkers(dir string, changes []Change) error {
 		if !strings.ContainsAny(change.Status, "MAUR") {
 			continue
 		}
-		found, err := utils.ContainsConflictMarkers(path.Join(dir, change.Path))
+		found, err := utils.ContainsConflictMarkers(filepath.Join(dir, change.Path))
 		if err != nil {
 			return fmt.Errorf("could not check %s for conflict markers: %w", change.Path, err)
 		}
@@ -234,7 +235,7 @@ func resolveRebase(dir string, strategy string) error {
 		}
 
 		for _, file := range conflicts {
-			utils.PrintMessage("Auto-resolving conflict in", file, "using "+strategy+" version")
+			utils.PrintValue("Auto-resolving conflict using "+strategy+" version", file)
 			checkoutCmd := exec.Command("git", "checkout", checkoutFlag, "--", file)
 			checkoutCmd.Dir = dir
 			if err := runGit(checkoutCmd); err != nil {
