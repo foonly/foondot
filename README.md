@@ -41,10 +41,10 @@ dots = [
 Creates symlinks from the `source` files/directories in your `dotfiles` directory to the `target` locations specified in the configuration file.
 
 - **Handling Conflicts**: If a file or directory already exists at the `target` location, Foondot will move the existing file/directory into your `dotfiles` directory before linking. If the source file/directory also exists, it appends `.conflict` to the name. For example, if `.config/program` already exists, it will be moved to `dotfiles/program.conflict`.
-- **Removing Symlinks**: Foondot tries to clean up links when they are removed from the config or no longer active for your hostname. It does this by keeping track of all the links it has written.
+- **Removing Symlinks**: Foondot tries to clean up links when they are removed from the config or no longer active for your hostname. It does this by keeping track of all the links it has written. Links that no longer point into your `dotfiles` directory are left alone, and cleanup is skipped if a wildcard source can't be read.
 - **Using Wildcards**: If the source path ends in /\*, the individual files in the folder are linked to the target location. This is useful if you want to combine different source paths into the same target. Note however that if using this, you need to re-link if you add or remove files or folders.
 
-### `sync` (default)
+### `sync`
 
 Automatically synchronizes your dotfiles repository using Git. It follows a streamlined workflow:
 
@@ -57,7 +57,7 @@ If a merge conflict occurs during the sync process, Foondot will abort and notif
 
 ## Usage
 
-Foondot uses a subcommand structure. Running it without a command defaults to `link`.
+Foondot uses a subcommand structure. Running it without a command only prints usage and does nothing else. Flags can be given before or after the command.
 
 ### Command-Line Options:
 
@@ -90,5 +90,5 @@ Foondot uses a subcommand structure. Running it without a command defaults to `l
 Foondot provides informative error messages in case of issues.
 
 - **Missing Configuration File:** If the main configuration file is missing, an empty one will be generated in `$HOME/.config/foondot.toml`.
-- **Faulty Configuration:** If there are errors in the configuration file (e.g., invalid TOML syntax, missing required fields), Foondot will display an error message explaining the problem.
+- **Faulty Configuration:** If there are errors in the configuration file (e.g., invalid TOML syntax or unknown keys), Foondot will display an error message explaining the problem.
 - **Git Errors:** The `sync` command will report errors if the directory is not a Git repository or if network/conflict issues occur during push/pull.

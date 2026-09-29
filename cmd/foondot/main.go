@@ -1,7 +1,6 @@
 package foondot
 
 import (
-	_ "embed"
 	"flag"
 	"fmt"
 	"os"
@@ -26,18 +25,44 @@ func Execute() {
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s [flags] [command]\n\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "Commands:\n")
-		fmt.Fprintf(os.Stderr, "  link    Link dotfiles (default)\n")
+		fmt.Fprintf(os.Stderr, "  link    Link dotfiles\n")
 		fmt.Fprintf(os.Stderr, "  sync    Sync dotfiles with git\n\n")
 		fmt.Fprintf(os.Stderr, "Flags:\n")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
 
+	// Subcommand parsing
+	args := flag.Args()
+	command := ""
+	if len(args) > 0 {
+		command = args[0]
+		// Parse again so flags are also accepted after the subcommand, e.g. `foondot link -f`.
+		flag.CommandLine.Parse(args[1:])
+		if flag.NArg() > 0 {
+			utils.PrintError("Unexpected argument", flag.Arg(0))
+			flag.Usage()
+			os.Exit(2)
+		}
+	}
+
 	config.Hostname, _ = os.Hostname()
 
 	if *showVersion {
 		fmt.Fprintf(os.Stdout, "Version: %s\nHostname: %s\n", config.Version, config.Hostname)
 		os.Exit(0)
+	}
+
+	// Without a command, do nothing but show usage.
+	if command == "" {
+		flag.Usage()
+		os.Exit(0)
+	}
+
+	if command != "link" && command != "sync" {
+		utils.PrintError("Unknown command", command)
+		flag.Usage()
+		os.Exit(2)
 	}
 
 	if *showColor {
@@ -55,13 +80,6 @@ func Execute() {
 		utils.Color = true
 	}
 
-	// Subcommand parsing
-	args := flag.Args()
-	command := "sync"
-	if len(args) > 0 {
-		command = args[0]
-	}
-
 	switch command {
 	case "link":
 		dots.Link(cfg, *force)
@@ -71,7 +89,5 @@ func Execute() {
 			utils.PrintError("Sync failed", err.Error())
 			os.Exit(1)
 		}
-	default:
-		utils.PrintError("Unknown command", command)
 	}
 }
