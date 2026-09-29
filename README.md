@@ -65,6 +65,8 @@ If a conflict occurs while pulling, Foondot applies the configured `sync_strateg
 
 Before committing, Foondot also refuses to sync if any changed file contains git conflict markers.
 
+Since `sync` commits every change in your `dotfiles` directory, including new files, use `foondot sync -n` to review what would be published first. This is especially useful after `link` has moved existing files into your `dotfiles` directory.
+
 ## Usage
 
 Foondot uses a subcommand structure. Running it without a command only prints usage and does nothing else. Flags can be given before or after the command.
@@ -72,6 +74,7 @@ Foondot uses a subcommand structure. Running it without a command only prints us
 ### Command-Line Options:
 
 - `-f`: Force relinking and move conflicting files to the backup folder (applies to `link` command).
+- `-n`: Show what `sync` would commit and push, without pulling, staging, committing or pushing anything (applies to `sync` command).
 - `-c <path>`: Specify the location of an alternate configuration file.
 - `-v`: Show the version and hostname.
 - `-cc`: Enable color output.
@@ -88,6 +91,12 @@ Foondot uses a subcommand structure. Running it without a command only prints us
 
   ```bash
   foondot sync
+  ```
+
+- **Review what sync would publish**:
+
+  ```bash
+  foondot sync -n
   ```
 
 - **Force relink with a specific config**:

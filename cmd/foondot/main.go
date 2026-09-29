@@ -52,6 +52,7 @@ func run(args []string, env environment) int {
 	showColor := flags.Bool("cc", false, "Show color")
 	configFile := flags.String("c", defaultConfigFile, "Config file location")
 	force := flags.Bool("f", false, "Force relink, and move files out of the way")
+	dryRun := flags.Bool("n", false, "Show what sync would commit and push, without changing anything")
 
 	flags.Usage = func() {
 		out := flags.Output()
@@ -98,6 +99,12 @@ func run(args []string, env environment) int {
 		return 2
 	}
 
+	// A dry run of link isn't supported, so don't let -n silently link.
+	if *dryRun && command != "sync" {
+		utils.PrintError("The -n flag only applies to", "sync")
+		return 2
+	}
+
 	if *showColor {
 		utils.Color = true
 	}
@@ -138,6 +145,7 @@ func run(args []string, env environment) int {
 	case "sync":
 		err = git.Sync(cfg.DotfilesDir(env.home), git.Options{
 			Strategy: cfg.SyncStrategy,
+			DryRun:   *dryRun,
 		})
 		if err != nil {
 			utils.PrintError("Sync failed", err.Error())

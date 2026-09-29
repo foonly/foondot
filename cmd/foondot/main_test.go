@@ -54,6 +54,7 @@ func TestRunUsage(t *testing.T) {
 		{"unexpected argument", []string{"link", "extra"}, 2},
 		{"unknown flag", []string{"-x"}, 2},
 		{"unknown flag after command", []string{"link", "-x"}, 2},
+		{"dry run of link", []string{"link", "-n"}, 2},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

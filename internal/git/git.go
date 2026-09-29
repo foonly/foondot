@@ -23,6 +23,9 @@ type Change struct {
 type Options struct {
 	// Strategy resolves conflicts when pulling: "manual", "local" or "remote".
 	Strategy string
+	// DryRun only lists the local changes that would be committed, without
+	// pulling, staging, committing or pushing anything.
+	DryRun bool
 }
 
 // Sync orchestrates the automatic synchronization process for the dotfiles directory.
@@ -31,6 +34,10 @@ type Options struct {
 func Sync(dotfilesDir string, opts Options) error {
 	if err := checkRepo(dotfilesDir); err != nil {
 		return err
+	}
+
+	if opts.DryRun {
+		return showPending(dotfilesDir)
 	}
 
 	// 1. Pull changes first using rebase and autostash.
@@ -86,6 +93,56 @@ func Sync(dotfilesDir string, opts Options) error {
 	return nil
 }
 
+// showPending lists the local changes that the next sync would commit,
+// without pulling, staging or committing anything. It returns an error if any
+// of them contain conflict markers, since sync would refuse to commit them.
+func showPending(dir string) error {
+	changes, err := getChanges(dir, "--untracked-files=all")
+	if err != nil {
+		return fmt.Errorf("failed to get git status: %w", err)
+	}
+	if len(changes) == 0 {
+		utils.PrintMessage("No local changes to sync.")
+		return nil
+	}
+
+	utils.PrintMessage("Sync would commit and push these local changes (remote changes are not fetched):")
+	for _, change := range changes {
+		switch {
+		case deletedInWorktree(change.Status) && strings.HasPrefix(change.Status, "A"):
+			// Staged, then deleted again: staging everything leaves nothing to commit.
+			continue
+		case deletedInWorktree(change.Status) && change.OldPath != "":
+			utils.PrintValue("  Deleted", change.OldPath)
+		case change.OldPath != "":
+			utils.PrintChange("  Renamed", change.OldPath, change.Path)
+		default:
+			utils.PrintValue("  "+describeStatus(change.Status), change.Path)
+		}
+	}
+
+	return checkConflictMarkers(dir, changes)
+}
+
+// describeStatus turns a porcelain status code into a word for listing changes,
+// describing what staging everything would do.
+func describeStatus(status string) string {
+	switch {
+	case strings.Contains(status, "D"):
+		return "Deleted"
+	case strings.Contains(status, "?"), strings.HasPrefix(status, "A"), strings.HasPrefix(status, "C"):
+		return "Added"
+	default:
+		return "Modified"
+	}
+}
+
+// deletedInWorktree reports whether a porcelain status code (with spaces
+// trimmed) says the file no longer exists in the working tree.
+func deletedInWorktree(status string) bool {
+	return strings.HasSuffix(status, "D")
+}
+
 // runGit runs a git command and includes git's output in the returned error,
 // so failures don't just report "exit status 1".
 func runGit(cmd *exec.Cmd) error {
@@ -119,7 +176,8 @@ func gitError(err error, output []byte) error {
 // contains git conflict markers, or can't be checked.
 func checkConflictMarkers(dir string, changes []Change) error {
 	for _, change := range changes {
-		if !strings.ContainsAny(change.Status, "MAUR") {
+		// "?" marks untracked files, which only occur in a dry run, before staging.
+		if !strings.ContainsAny(change.Status, "MAUR?") || deletedInWorktree(change.Status) {
 			continue
 		}
 		found, err := utils.ContainsConflictMarkers(filepath.Join(dir, change.Path))
@@ -261,9 +319,10 @@ func resolveRebase(dir string, strategy string) error {
 	return nil
 }
 
-// getChanges retrieves and parses a list of repository file changes by executing 'git status --porcelain -z'.
-func getChanges(dir string) ([]Change, error) {
-	cmd := exec.Command("git", "status", "--porcelain", "-z")
+// getChanges retrieves and parses a list of repository file changes by executing
+// 'git status --porcelain -z', with any extra arguments.
+func getChanges(dir string, args ...string) ([]Change, error) {
+	cmd := exec.Command("git", append([]string{"status", "--porcelain", "-z"}, args...)...)
 	cmd.Dir = dir
 	output, err := gitOutput(cmd)
 	if err != nil {

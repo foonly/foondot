@@ -431,3 +431,66 @@ func TestSyncNotARepository(t *testing.T) {
 		t.Error("expected an error outside a repository")
 	}
 }
+
+func TestSyncDryRun(t *testing.T) {
+	local, remote := syncedClone(t)
+	commitFile(t, local, "old name", "same\n")
+	run(t, local, "push", "-q")
+	remoteBefore := run(t, remote, "rev-parse", "HEAD")
+	localBefore := run(t, local, "rev-parse", "HEAD")
+	writeTestFile(t, filepath.Join(local, "sway", "config"), "2\n")
+	writeTestFile(t, filepath.Join(local, "secret"), "token\n")
+	run(t, local, "mv", "old name", "new name")
+	statusBefore := run(t, local, "status", "--porcelain")
+
+	if err := Sync(local, Options{Strategy: "manual", DryRun: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := run(t, local, "status", "--porcelain"); got != statusBefore {
+		t.Errorf("dry run changed the working tree or index:\n%s\nwant:\n%s", got, statusBefore)
+	}
+	if run(t, local, "rev-parse", "HEAD") != localBefore || run(t, remote, "rev-parse", "HEAD") != remoteBefore {
+		t.Error("dry run created or pushed a commit")
+	}
+}
+
+func TestSyncDryRunReportsConflictMarkers(t *testing.T) {
+	local, _ := syncedClone(t)
+	// An untracked file, which a real sync would stage and then refuse.
+	writeTestFile(t, filepath.Join(local, "new"), "<<<<<<< HEAD\na\n=======\nb\n>>>>>>> 1234abc\n")
+
+	err := Sync(local, Options{Strategy: "manual", DryRun: true})
+
+	if err == nil || !strings.Contains(err.Error(), "conflict markers") {
+		t.Errorf("got %v, want a conflict marker error", err)
+	}
+}
+
+func TestDescribeStatus(t *testing.T) {
+	for status, want := range map[string]string{
+		"??": "Added", "A": "Added", "AM": "Added",
+		"M": "Modified", "MM": "Modified",
+		"D": "Deleted", "AD": "Deleted", "MD": "Deleted",
+	} {
+		if got := describeStatus(status); got != want {
+			t.Errorf("%q: got %s, want %s", status, got, want)
+		}
+	}
+}
+
+func TestSyncDryRunStagedThenDeleted(t *testing.T) {
+	local, _ := syncedClone(t)
+	// Staged with conflict markers, then deleted: there is nothing left to check.
+	file := filepath.Join(local, "gone")
+	writeTestFile(t, file, "<<<<<<< HEAD\na\n=======\nb\n>>>>>>> 1234abc\n")
+	run(t, local, "add", "gone")
+	if err := os.Remove(file); err != nil {
+		t.Fatal(err)
+	}
+	run(t, local, "rm", "-q", "--cached", "sway/config")
+
+	if err := Sync(local, Options{Strategy: "manual", DryRun: true}); err != nil {
+		t.Errorf("unexpected error %v", err)
+	}
+}
