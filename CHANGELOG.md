@@ -1,6 +1,13 @@
 # Changelog
 
-## 1.0.0 (2026-09-29)
+### 1.0.1 (2026-09-29)
+
+#### Bug Fixes
+
+- git: commit locally when there is no remote or upstream branch (0bec0fa)
+- aur: Update package description in PKGBUILD (cb2777c)
+
+## v1.0.0 (2026-09-29)
 
 #### Features
 
