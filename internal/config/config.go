@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path"
 
@@ -146,20 +147,39 @@ func CreateDefaultConfig(configFile string) {
  * Reads the dots data from the JSON file specified by dotsDataFileName.
  * If the file does not exist, the function returns without error.
  * If the file exists but cannot be read or parsed, the program exits with an error message.
+ * Continuing would overwrite the file and lose track of all links.
  *
  * The dots data is unmarshaled into the global variable dotsData.
  */
 func ReadDotsData() {
 	filename := getDataFilename(dotsDataFileName)
-	data, err := os.ReadFile(filename)
+	dotsData, err := readDotsData(filename)
 	if err != nil {
-		return
-	}
-	err = json.Unmarshal([]byte(data), &DotsData)
-	if err != nil {
-		utils.PrintError("Error reading JSON file", filename, err.Error())
+		utils.PrintError("Error reading dots data", filename, err.Error())
 		os.Exit(2)
 	}
+	DotsData = dotsData
+}
+
+/**
+ * Reads a dots data file. A missing file is not an error and gives an empty list.
+ *
+ * @param filename The path to the dots data file.
+ * @return []string The tracked link targets.
+ * @return error Set if the file exists but can't be read or parsed.
+ */
+func readDotsData(filename string) ([]string, error) {
+	data, err := os.ReadFile(filename)
+	if errors.Is(err, fs.ErrNotExist) {
+		return []string{}, nil
+	} else if err != nil {
+		return nil, err
+	}
+	var dotsData []string
+	if err := json.Unmarshal(data, &dotsData); err != nil {
+		return nil, err
+	}
+	return dotsData, nil
 }
 
 /**
@@ -176,7 +196,7 @@ func WriteDotsData() {
 		os.Exit(3)
 	}
 
-	err = os.WriteFile(filename, data, 0644)
+	err = utils.WriteFileAtomic(filename, data, 0644)
 	if err != nil {
 		utils.PrintError("Error writing dots data", filename, err.Error())
 		os.Exit(4)

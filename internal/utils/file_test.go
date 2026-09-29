@@ -57,3 +57,64 @@ func TestContainsConflictMarkersMissing(t *testing.T) {
 		t.Error("expected an error for a missing file")
 	}
 }
+
+func TestWriteFileAtomic(t *testing.T) {
+	dir := t.TempDir()
+	file := path.Join(dir, "data.json")
+	if err := os.WriteFile(file, []byte("old"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := WriteFileAtomic(file, []byte("new"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "new" {
+		t.Errorf("content = %q, want %q", data, "new")
+	}
+	stat, err := os.Stat(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stat.Mode().Perm() != 0644 {
+		t.Errorf("mode = %v, want 0644", stat.Mode().Perm())
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Errorf("directory has %d entries, want no leftover temporary files", len(entries))
+	}
+}
+
+func TestWriteFileAtomicFailureKeepsOldFile(t *testing.T) {
+	dir := t.TempDir()
+	file := path.Join(dir, "data.json")
+	if err := os.WriteFile(file, []byte("old"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	// The target is a directory now, so the rename fails.
+	target := path.Join(dir, "sub")
+	if err := os.Mkdir(target, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path.Join(target, "x"), nil, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := WriteFileAtomic(target, []byte("new"), 0644); err == nil {
+		t.Error("expected an error when replacing a non-empty directory")
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 2 {
+		t.Errorf("directory has %d entries, want no leftover temporary files", len(entries))
+	}
+}

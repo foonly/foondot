@@ -3,6 +3,7 @@ package utils
 import (
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -37,6 +38,40 @@ func GetType(fileName string) int {
 		return IsDirectory
 	}
 	return IsFile
+}
+
+/**
+ * Writes data to a file by writing a temporary file in the same directory and
+ * renaming it over the target, so the file is never left partially written.
+ *
+ * @param filename The path to the file.
+ * @param data The data to write.
+ * @param perm The permissions of the file.
+ * @return error Set if the file couldn't be written.
+ */
+func WriteFileAtomic(filename string, data []byte, perm os.FileMode) error {
+	tmp, err := os.CreateTemp(filepath.Dir(filename), "."+filepath.Base(filename)+".*.tmp")
+	if err != nil {
+		return err
+	}
+	// Removing fails harmlessly once the file has been renamed.
+	defer os.Remove(tmp.Name())
+
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmp.Name(), perm); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), filename)
 }
 
 /**
