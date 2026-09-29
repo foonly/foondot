@@ -1,6 +1,7 @@
 package git
 
 import (
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -493,4 +494,154 @@ func TestSyncDryRunStagedThenDeleted(t *testing.T) {
 	if err := Sync(local, Options{Strategy: "manual", DryRun: true}); err != nil {
 		t.Errorf("unexpected error %v", err)
 	}
+}
+
+// branchExists reports whether a branch exists in a repository.
+func branchExists(dir, branch string) bool {
+	cmd := exec.Command("git", "rev-parse", "--verify", "-q", "refs/heads/"+branch)
+	cmd.Dir = dir
+	return cmd.Run() == nil
+}
+
+func TestSyncWithoutRemote(t *testing.T) {
+	isolateGit(t)
+	dir := t.TempDir()
+	run(t, dir, "init", "-q", "-b", "main")
+	writeTestFile(t, filepath.Join(dir, "bashrc"), "1\n")
+
+	// The first sync happens before any commit exists.
+	if err := Sync(dir, Options{Strategy: "manual"}); err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, filepath.Join(dir, "bashrc"), "2\n")
+	if err := Sync(dir, Options{Strategy: "manual"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := run(t, dir, "log", "--format=%s"); got != "Updated bashrc\nAdded bashrc\n" {
+		t.Errorf("commits = %q", got)
+	}
+}
+
+func TestSyncWithoutUpstream(t *testing.T) {
+	isolateGit(t)
+	root := t.TempDir()
+	remote := filepath.Join(root, "remote.git")
+	dir := filepath.Join(root, "dotfiles")
+	run(t, root, "init", "-q", "--bare", "-b", "main", remote)
+	run(t, root, "init", "-q", "-b", "main", dir)
+	run(t, dir, "remote", "add", "origin", remote)
+	writeTestFile(t, filepath.Join(dir, "bashrc"), "1\n")
+
+	plan, err := planRemote(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.pull || plan.push || !strings.Contains(plan.reason, "git push -u origin main") {
+		t.Errorf("plan = %+v, want no pull or push, with a hint to set the upstream", plan)
+	}
+
+	if err := Sync(dir, Options{Strategy: "manual"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := run(t, dir, "log", "--format=%s"); got != "Added bashrc\n" {
+		t.Errorf("commits = %q", got)
+	}
+	if branchExists(remote, "main") {
+		t.Error("pushed without an upstream branch")
+	}
+}
+
+func TestSyncToEmptyRemote(t *testing.T) {
+	isolateGit(t)
+	root := t.TempDir()
+	remote := filepath.Join(root, "remote.git")
+	dir := filepath.Join(root, "dotfiles")
+	run(t, root, "init", "-q", "--bare", "-b", "main", remote)
+	// Cloning an empty repository sets the upstream branch, which doesn't exist yet.
+	run(t, root, "clone", "-q", remote, dir)
+	writeTestFile(t, filepath.Join(dir, "bashrc"), "1\n")
+
+	if err := Sync(dir, Options{Strategy: "manual"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := run(t, remote, "log", "--format=%s", "main"); got != "Added bashrc\n" {
+		t.Errorf("pushed commits = %q", got)
+	}
+	// Now that the upstream branch exists, the next sync pulls as well.
+	if plan, err := planRemote(dir); err != nil || !plan.pull || !plan.push {
+		t.Errorf("plan after first push = %+v, %v, want pull and push", plan, err)
+	}
+}
+
+func TestSyncDetachedHead(t *testing.T) {
+	local, _ := syncedClone(t)
+	run(t, local, "checkout", "-q", "--detach")
+	writeTestFile(t, filepath.Join(local, "bashrc"), "1\n")
+
+	err := Sync(local, Options{Strategy: "manual"})
+
+	if err == nil || !strings.Contains(err.Error(), "not on a branch") {
+		t.Errorf("got %v, want an error about HEAD not being on a branch", err)
+	}
+}
+
+func TestSyncDryRunWithoutRemote(t *testing.T) {
+	isolateGit(t)
+	dir := t.TempDir()
+	run(t, dir, "init", "-q", "-b", "main")
+	writeTestFile(t, filepath.Join(dir, "bashrc"), "1\n")
+
+	out := captureOutput(t, func() {
+		if err := Sync(dir, Options{Strategy: "manual", DryRun: true}); err != nil {
+			t.Error(err)
+		}
+	})
+
+	if !strings.Contains(out, "without pushing because no git remote is configured") {
+		t.Errorf("dry run output doesn't say it won't push:\n%s", out)
+	}
+}
+
+func TestGenerateCommitMessageBeforeFirstCommit(t *testing.T) {
+	isolateGit(t)
+	dir := t.TempDir()
+	run(t, dir, "init", "-q", "-b", "main")
+	writeTestFile(t, filepath.Join(dir, "bashrc"), "1\n")
+	run(t, dir, "add", "-A")
+
+	var message string
+	out := captureOutput(t, func() {
+		message = generateCommitMessage(dir, []Change{{Status: "A", Path: "bashrc"}})
+	})
+
+	if message != "Added bashrc" {
+		t.Errorf("message = %q", message)
+	}
+	if out != "" {
+		t.Errorf("unexpected output before the first commit:\n%s", out)
+	}
+}
+
+// captureOutput runs f and returns what it wrote to standard output and error.
+func captureOutput(t *testing.T, f func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdout, stderr := os.Stdout, os.Stderr
+	os.Stdout, os.Stderr = w, w
+	defer func() { os.Stdout, os.Stderr = stdout, stderr }()
+
+	f()
+
+	w.Close()
+	out, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(out)
 }

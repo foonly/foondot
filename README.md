@@ -57,6 +57,8 @@ Automatically synchronizes your dotfiles repository using Git. The `dotfiles` di
 3.  **Commit**: Generates a "smart" commit message based on the changed top-level folders and files (e.g., `Updated sway and mako, Added alacritty`).
 4.  **Push**: Pushes the local commits to the remote tracking branch.
 
+Without a remote, or if the current branch has no upstream branch, `sync` only commits locally and skips pulling and pushing. It tells you how to set the upstream branch, e.g. `git push -u origin main`. If the upstream branch is configured but doesn't exist on the remote yet, for example after cloning an empty repository, the first `sync` pushes it.
+
 If a conflict occurs while pulling, Foondot applies the configured `sync_strategy`:
 
 - `manual`: Abort the rebase and let you resolve the conflict yourself.

@@ -30,19 +30,27 @@ type Options struct {
 
 // Sync orchestrates the automatic synchronization process for the dotfiles directory.
 // It pulls remote changes with rebase, stages local modifications, creates a contextual commit message,
-// and pushes the resulting commit back to the remote repository.
+// and pushes the resulting commit back to the remote repository. Without a remote
+// or an upstream branch, it only commits locally.
 func Sync(dotfilesDir string, opts Options) error {
 	if err := checkRepo(dotfilesDir); err != nil {
 		return err
 	}
 
+	remote, err := planRemote(dotfilesDir)
+	if err != nil {
+		return err
+	}
+
 	if opts.DryRun {
-		return showPending(dotfilesDir)
+		return showPending(dotfilesDir, remote)
 	}
 
 	// 1. Pull changes first using rebase and autostash.
 	// This ensures we have the latest remote changes and helps avoid merge commits.
-	if err := pull(dotfilesDir); err != nil {
+	if !remote.pull {
+		utils.PrintValue("Skipping pull", remote.reason)
+	} else if err := pull(dotfilesDir); err != nil {
 		if isRebasing(dotfilesDir) {
 			utils.PrintValue("Conflicts detected during pull. Applying strategy", opts.Strategy)
 			if err := resolveRebase(dotfilesDir, opts.Strategy); err != nil {
@@ -84,19 +92,97 @@ func Sync(dotfilesDir string, opts Options) error {
 	}
 
 	// 4. Push the new commit to the remote repository.
-	utils.PrintMessage("Pushing changes...")
-	if err := push(dotfilesDir); err != nil {
-		return fmt.Errorf("failed to push: %w", err)
+	if !remote.push {
+		utils.PrintValue("Skipping push", remote.reason)
+	} else {
+		utils.PrintMessage("Pushing changes...")
+		if err := push(dotfilesDir); err != nil {
+			return fmt.Errorf("failed to push: %w", err)
+		}
 	}
 
 	utils.PrintMessage("Sync completed successfully")
 	return nil
 }
 
+// remotePlan says whether sync pulls from and pushes to the remote.
+type remotePlan struct {
+	pull bool
+	push bool
+	// reason explains why pulling or pushing is skipped.
+	reason string
+}
+
+// planRemote decides whether sync can pull and push:
+//   - Without any remote, or if the current branch has no upstream branch,
+//     sync only commits locally.
+//   - If the upstream branch is configured but doesn't exist yet, e.g. after
+//     cloning an empty repository, there is nothing to pull, but pushing creates it.
+//
+// An error is returned if HEAD is not on a branch, or if git fails.
+func planRemote(dir string) (remotePlan, error) {
+	cmd := exec.Command("git", "remote")
+	cmd.Dir = dir
+	out, err := gitOutput(cmd)
+	if err != nil {
+		return remotePlan{}, fmt.Errorf("failed to list git remotes: %w", err)
+	}
+	remotes := strings.Fields(string(out))
+	if len(remotes) == 0 {
+		return remotePlan{reason: "no git remote is configured"}, nil
+	}
+
+	cmd = exec.Command("git", "symbolic-ref", "--short", "-q", "HEAD")
+	cmd.Dir = dir
+	out, err = gitOutput(cmd)
+	if err != nil {
+		return remotePlan{}, fmt.Errorf("HEAD is not on a branch, check out a branch before syncing: %w", err)
+	}
+	branch := strings.TrimSpace(string(out))
+
+	hasUpstream, err := hasGitConfig(dir, "branch."+branch+".remote")
+	if err == nil && hasUpstream {
+		hasUpstream, err = hasGitConfig(dir, "branch."+branch+".merge")
+	}
+	if err != nil {
+		return remotePlan{}, fmt.Errorf("failed to read the upstream branch: %w", err)
+	}
+	if !hasUpstream {
+		remote := "<remote>"
+		if len(remotes) == 1 {
+			remote = remotes[0]
+		}
+		return remotePlan{
+			reason: fmt.Sprintf("branch %s has no upstream branch, set one with `git push -u %s %s`", branch, remote, branch),
+		}, nil
+	}
+
+	// The remote-tracking branch only exists once the upstream branch has been fetched or pushed.
+	cmd = exec.Command("git", "rev-parse", "--verify", "-q", "@{upstream}")
+	cmd.Dir = dir
+	if err := cmd.Run(); err != nil {
+		return remotePlan{push: true, reason: "the upstream branch doesn't exist yet"}, nil
+	}
+	return remotePlan{pull: true, push: true}, nil
+}
+
+// hasGitConfig reports whether a git config key is set.
+func hasGitConfig(dir, key string) (bool, error) {
+	cmd := exec.Command("git", "config", "--get", key)
+	cmd.Dir = dir
+	_, err := gitOutput(cmd)
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+		// Exit code 1 means the key isn't set.
+		return false, nil
+	}
+	return err == nil, err
+}
+
 // showPending lists the local changes that the next sync would commit,
 // without pulling, staging or committing anything. It returns an error if any
 // of them contain conflict markers, since sync would refuse to commit them.
-func showPending(dir string) error {
+func showPending(dir string, remote remotePlan) error {
 	changes, err := getChanges(dir, "--untracked-files=all")
 	if err != nil {
 		return fmt.Errorf("failed to get git status: %w", err)
@@ -106,7 +192,11 @@ func showPending(dir string) error {
 		return nil
 	}
 
-	utils.PrintMessage("Sync would commit and push these local changes (remote changes are not fetched):")
+	if remote.push {
+		utils.PrintMessage("Sync would commit and push these local changes (remote changes are not fetched):")
+	} else {
+		utils.PrintMessage("Sync would commit these local changes, without pushing because " + remote.reason + ":")
+	}
 	for _, change := range changes {
 		switch {
 		case deletedInWorktree(change.Status) && strings.HasPrefix(change.Status, "A"):
@@ -392,15 +482,9 @@ func hasInHEAD(dir, key string) bool {
 	cmd.Dir = dir
 	out, err := cmd.Output()
 	if err != nil {
-		// If HEAD does not exist yet (e.g. initial commit), git will report an unknown
-		// revision. Treat that specific case as "not in HEAD" without noise.
+		// Surface a diagnostic but still return false to match the boolean-only API.
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			stderr := string(exitErr.Stderr)
-			if strings.Contains(stderr, "unknown revision") && strings.Contains(stderr, "HEAD") {
-				return false
-			}
-			// For other git failures, surface a diagnostic but still return false to match
-			// the existing boolean-only API.
 			fmt.Fprintf(os.Stderr, "git ls-tree HEAD -- %s failed: %s\n", key, strings.TrimSpace(stderr))
 		} else {
 			fmt.Fprintf(os.Stderr, "git ls-tree HEAD -- %s error: %v\n", key, err)
@@ -430,6 +514,11 @@ func hasInIndex(dir, key string) bool {
 // generateCommitMessage constructs a human-readable commit message by analyzing the changes.
 // It groups modifications by top-level directory or file to summarize additions, updates, and removals.
 func generateCommitMessage(dir string, changes []Change) string {
+	// Before the first commit there is no HEAD, and everything is added.
+	headCmd := exec.Command("git", "rev-parse", "--verify", "-q", "HEAD")
+	headCmd.Dir = dir
+	headExists := headCmd.Run() == nil
+
 	added := make(map[string]bool)
 	updated := make(map[string]bool)
 	removed := make(map[string]bool)
@@ -446,7 +535,7 @@ func generateCommitMessage(dir string, changes []Change) string {
 	}
 
 	for key := range keys {
-		inHEAD := hasInHEAD(dir, key)
+		inHEAD := headExists && hasInHEAD(dir, key)
 		inIndex := hasInIndex(dir, key)
 
 		if inHEAD && inIndex {
