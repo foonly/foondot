@@ -238,3 +238,42 @@ func TestCheckConflictMarkers(t *testing.T) {
 		t.Errorf("deleted files should not be checked: %v", err)
 	}
 }
+
+func TestCommitErrorIncludesGitMessage(t *testing.T) {
+	isolateGit(t)
+	dir := t.TempDir()
+	run(t, dir, "init", "-b", "main")
+	if err := os.WriteFile(path.Join(dir, "file"), []byte("x\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := stageAll(dir); err != nil {
+		t.Fatal(err)
+	}
+	// Without a git identity the commit fails.
+	run(t, dir, "config", "user.useConfigOnly", "true")
+	for _, env := range []string{"GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL"} {
+		os.Unsetenv(env)
+	}
+
+	err := commit(dir, "message")
+
+	if err == nil {
+		t.Fatal("expected commit to fail")
+	}
+	if !strings.Contains(err.Error(), "no email was given") {
+		t.Errorf("error %q doesn't include git's message", err)
+	}
+}
+
+func TestGitOutputErrorIncludesStderr(t *testing.T) {
+	isolateGit(t)
+	// Not a repository, so git status fails.
+	_, err := getChanges(t.TempDir())
+
+	if err == nil {
+		t.Fatal("expected an error outside a repository")
+	}
+	if !strings.Contains(err.Error(), "not a git repository") {
+		t.Errorf("error %q doesn't include git's message", err)
+	}
+}

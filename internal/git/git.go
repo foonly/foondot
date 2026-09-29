@@ -1,6 +1,7 @@
 package git
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -34,7 +35,7 @@ func Sync(cfg config.Config) error {
 	// This ensures we have the latest remote changes and helps avoid merge commits.
 	if err := pull(dotfilesDir); err != nil {
 		if isRebasing(dotfilesDir) {
-			utils.PrintMessage("Conflicts detected during pull. Applying strategy:", cfg.SyncStrategy)
+			utils.PrintMessage("Conflicts detected during pull. Applying strategy", cfg.SyncStrategy)
 			if err := resolveRebase(dotfilesDir, cfg.SyncStrategy); err != nil {
 				return fmt.Errorf("failed to resolve conflicts: %w. Please resolve manually", err)
 			}
@@ -83,6 +84,35 @@ func Sync(cfg config.Config) error {
 	return nil
 }
 
+// runGit runs a git command and includes git's output in the returned error,
+// so failures don't just report "exit status 1".
+func runGit(cmd *exec.Cmd) error {
+	out, err := cmd.CombinedOutput()
+	return gitError(err, out)
+}
+
+// gitOutput runs a git command and returns its standard output. Git's error
+// output is included in the returned error.
+func gitOutput(cmd *exec.Cmd) ([]byte, error) {
+	out, err := cmd.Output()
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return nil, gitError(err, exitErr.Stderr)
+	}
+	return out, err
+}
+
+// gitError adds git's output to a failed command's error.
+func gitError(err error, output []byte) error {
+	if err == nil {
+		return nil
+	}
+	if msg := strings.TrimSpace(string(output)); msg != "" {
+		return fmt.Errorf("%w: %s", err, msg)
+	}
+	return err
+}
+
 // checkConflictMarkers returns an error if any modified, added or renamed file
 // contains git conflict markers, or can't be checked.
 func checkConflictMarkers(dir string, changes []Change) error {
@@ -122,7 +152,7 @@ func isRebasing(dir string) bool {
 func getConflictedFiles(dir string) ([]string, error) {
 	cmd := exec.Command("git", "diff", "--name-only", "-z", "--diff-filter=U")
 	cmd.Dir = dir
-	out, err := cmd.Output()
+	out, err := gitOutput(cmd)
 	if err != nil {
 		return nil, err
 	}
@@ -142,7 +172,7 @@ func resolveRebase(dir string, strategy string) error {
 		// Abort rebase to leave the repo in a clean state (as much as possible)
 		abortCmd := exec.Command("git", "rebase", "--abort")
 		abortCmd.Dir = dir
-		if err := abortCmd.Run(); err != nil {
+		if err := runGit(abortCmd); err != nil {
 			return fmt.Errorf("sync strategy set to 'manual', but aborting the rebase failed: %w", err)
 		}
 		return fmt.Errorf("sync strategy set to 'manual'. Aborting rebase")
@@ -173,16 +203,16 @@ func resolveRebase(dir string, strategy string) error {
 		}
 
 		for _, file := range conflicts {
-			utils.PrintMessage("Auto-resolving conflict in", file, "using", strategy, "version")
+			utils.PrintMessage("Auto-resolving conflict in", file, "using "+strategy+" version")
 			checkoutCmd := exec.Command("git", "checkout", checkoutFlag, "--", file)
 			checkoutCmd.Dir = dir
-			if err := checkoutCmd.Run(); err != nil {
+			if err := runGit(checkoutCmd); err != nil {
 				return fmt.Errorf("failed to checkout %s version of %s: %w", strategy, file, err)
 			}
 
 			addCmd := exec.Command("git", "add", "--", file)
 			addCmd.Dir = dir
-			if err := addCmd.Run(); err != nil {
+			if err := runGit(addCmd); err != nil {
 				return fmt.Errorf("failed to add resolved file %s: %w", file, err)
 			}
 		}
@@ -193,7 +223,7 @@ func resolveRebase(dir string, strategy string) error {
 		continueCmd.Env = append(os.Environ(), "GIT_EDITOR=true")
 		// Rebase continue fails if there are more conflicts in the next commit,
 		// which we handle in the next iteration.
-		continueErr = continueCmd.Run()
+		continueErr = runGit(continueCmd)
 	}
 
 	return nil
@@ -203,7 +233,7 @@ func resolveRebase(dir string, strategy string) error {
 func getChanges(dir string) ([]Change, error) {
 	cmd := exec.Command("git", "status", "--porcelain", "-z")
 	cmd.Dir = dir
-	output, err := cmd.Output()
+	output, err := gitOutput(cmd)
 	if err != nil {
 		return nil, err
 	}
@@ -246,14 +276,14 @@ func pull(dir string) error {
 func stageAll(dir string) error {
 	cmd := exec.Command("git", "add", "-A")
 	cmd.Dir = dir
-	return cmd.Run()
+	return runGit(cmd)
 }
 
 // commit creates a new git commit containing the currently staged changes, utilizing the provided message.
 func commit(dir, message string) error {
 	cmd := exec.Command("git", "commit", "-m", message)
 	cmd.Dir = dir
-	return cmd.Run()
+	return runGit(cmd)
 }
 
 // push uploads local repository commits to the configured upstream remote tracking branch.
