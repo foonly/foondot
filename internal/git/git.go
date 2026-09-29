@@ -131,15 +131,28 @@ func getConflictedFiles(dir string) ([]string, error) {
 func resolveRebase(dir string, strategy string) error {
 	if strategy == "manual" {
 		// Abort rebase to leave the repo in a clean state (as much as possible)
-		exec.Command("git", "rebase", "--abort").Run()
+		abortCmd := exec.Command("git", "rebase", "--abort")
+		abortCmd.Dir = dir
+		if err := abortCmd.Run(); err != nil {
+			return fmt.Errorf("sync strategy set to 'manual', but aborting the rebase failed: %w", err)
+		}
 		return fmt.Errorf("sync strategy set to 'manual'. Aborting rebase")
 	}
 
 	// Rebase might involve multiple commits, so we might need to resolve multiple times.
+	var continueErr error
 	for isRebasing(dir) {
 		conflicts, err := getConflictedFiles(dir)
 		if err != nil {
 			return err
+		}
+		// Every iteration must resolve at least one conflict, otherwise the rebase
+		// stopped for another reason and retrying would loop forever.
+		if len(conflicts) == 0 {
+			if continueErr != nil {
+				return fmt.Errorf("rebase stopped without conflicts: %w", continueErr)
+			}
+			return fmt.Errorf("rebase stopped without conflicts")
 		}
 
 		// During a rebase:
@@ -172,13 +185,9 @@ func resolveRebase(dir string, strategy string) error {
 		continueCmd := exec.Command("git", "rebase", "--continue")
 		continueCmd.Dir = dir
 		continueCmd.Env = append(os.Environ(), "GIT_EDITOR=true")
-		// We don't check for error immediately here because rebase continue might fail
-		// if there are more conflicts in the next commit, which we handle in the next iteration.
-		_ = continueCmd.Run()
-
-		if !isRebasing(dir) {
-			break
-		}
+		// Rebase continue fails if there are more conflicts in the next commit,
+		// which we handle in the next iteration.
+		continueErr = continueCmd.Run()
 	}
 
 	return nil
