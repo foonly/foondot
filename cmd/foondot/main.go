@@ -82,7 +82,11 @@ func Execute() {
 
 	switch command {
 	case "link":
-		dots.Link(cfg, *force)
+		err := dots.Link(cfg, *force)
+		if err != nil {
+			utils.PrintError("Link failed", err.Error())
+			os.Exit(1)
+		}
 	case "sync":
 		err := git.Sync(cfg)
 		if err != nil {

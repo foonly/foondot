@@ -102,3 +102,4 @@ Foondot provides informative error messages in case of issues.
 - **Missing Configuration File:** If the main configuration file is missing, an empty one will be generated in `$HOME/.config/foondot.toml`.
 - **Faulty Configuration:** If there are errors in the configuration file (e.g., invalid TOML syntax or unknown keys), Foondot will display an error message explaining the problem.
 - **Git Errors:** The `sync` command will report errors if the directory is not the top level of a Git repository or if network/conflict issues occur during push/pull.
+- **Linking Errors:** The `link` command reports each dotfile it couldn't link and why, and exits with a non-zero status if any dotfile or old link failed. Dotfiles that are already linked count as success.

@@ -210,7 +210,9 @@ func TestLinkAbsoluteTarget(t *testing.T) {
 	// An absolute target outside the home directory.
 	outside := path.Join(t.TempDir(), "etc", "conf")
 
-	handleDot(config.Item{Source: "conf", Target: outside}, "dotfiles", false)
+	if _, err := handleDot(config.Item{Source: "conf", Target: outside}, "dotfiles", false); err != nil {
+		t.Fatal(err)
+	}
 
 	if utils.GetType(outside) != utils.IsSymlink {
 		t.Errorf("expected symlink at %s", outside)
@@ -231,8 +233,8 @@ func TestHandleDotMovesTargetToMissingSource(t *testing.T) {
 	target := path.Join(home, ".config", "app")
 	writeContent(t, target, "existing")
 
-	if !handleDot(config.Item{Source: "app/config", Target: ".config/app"}, "dotfiles", false) {
-		t.Fatal("expected link to be created")
+	if linked, err := handleDot(config.Item{Source: "app/config", Target: ".config/app"}, "dotfiles", false); !linked || err != nil {
+		t.Fatalf("got (%v, %v), want link to be created", linked, err)
 	}
 
 	source := path.Join(dotfilesDir, "app", "config")
@@ -250,8 +252,8 @@ func TestHandleDotSkipsExistingWithoutForce(t *testing.T) {
 	target := path.Join(home, ".bashrc")
 	writeContent(t, target, "target")
 
-	if handleDot(config.Item{Source: "bashrc", Target: ".bashrc"}, "dotfiles", false) {
-		t.Error("expected no link without force")
+	if linked, err := handleDot(config.Item{Source: "bashrc", Target: ".bashrc"}, "dotfiles", false); linked || err == nil {
+		t.Errorf("got (%v, %v), want an error without force", linked, err)
 	}
 	if got := readContent(t, target); got != "target" {
 		t.Errorf("target = %q, want it untouched", got)
@@ -272,8 +274,8 @@ func TestHandleDotForceBacksUpOutsideDotfiles(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		if !handleDot(item, "dotfiles", true) {
-			t.Fatalf("run %d: expected link to be created", i)
+		if linked, err := handleDot(item, "dotfiles", true); !linked || err != nil {
+			t.Fatalf("run %d: got (%v, %v), want link to be created", i, linked, err)
 		}
 		if got := readContent(t, want); got != "target "+strconv.Itoa(i) {
 			t.Errorf("run %d: backup %s = %q", i, want, got)
@@ -299,7 +301,67 @@ func TestPrepareTargetSourceReportsErrors(t *testing.T) {
 	if err := prepareTargetSource(target, path.Join(dotfilesDir, "conf"), false); err == nil {
 		t.Error("expected an error when the target directory can't be created")
 	}
-	if handleDot(config.Item{Source: "conf", Target: "blocker/conf"}, "dotfiles", false) {
-		t.Error("expected handleDot to fail")
+	if linked, err := handleDot(config.Item{Source: "conf", Target: "blocker/conf"}, "dotfiles", false); linked || err == nil {
+		t.Errorf("got (%v, %v), want an error", linked, err)
+	}
+}
+
+func TestHandleDotExistingLinks(t *testing.T) {
+	home, dotfilesDir := setupHome(t)
+	source := path.Join(dotfilesDir, "bashrc")
+	writeFile(t, source)
+	item := config.Item{Source: "bashrc", Target: ".bashrc"}
+	target := path.Join(home, ".bashrc")
+
+	// Already linked, e.g. by an earlier run whose dots data was lost.
+	symlink(t, source, target)
+	linked, err := handleDot(item, "dotfiles", false)
+	if linked || err != nil {
+		t.Errorf("already linked: got (%v, %v), want (false, nil)", linked, err)
+	}
+	if !slices.Equal(config.DotsData, []string{target}) {
+		t.Errorf("already linked: tracked %v, want the existing link", config.DotsData)
+	}
+
+	// Linked somewhere else.
+	os.Remove(target)
+	symlink(t, path.Join(home, "elsewhere"), target)
+	if _, err := handleDot(item, "dotfiles", false); err == nil {
+		t.Error("link to another location: expected an error without force")
+	}
+	if linked, err := handleDot(item, "dotfiles", true); !linked || err != nil {
+		t.Errorf("link to another location with force: got (%v, %v), want relinked", linked, err)
+	}
+	if !linksTo(target, source) {
+		t.Error("link was not replaced")
+	}
+}
+
+func TestHandleDotMissingSource(t *testing.T) {
+	setupHome(t)
+
+	if _, err := handleDot(config.Item{Source: "missing", Target: ".missing"}, "dotfiles", false); err == nil {
+		t.Error("expected an error for a missing source")
+	}
+}
+
+func TestLinkReturnsFailures(t *testing.T) {
+	home, dotfilesDir := setupHome(t)
+	writeFile(t, path.Join(dotfilesDir, "ok"))
+	cfg := config.Config{Dotfiles: "dotfiles", Dots: []config.Item{
+		{Source: "ok", Target: ".ok"},
+		{Source: "missing", Target: ".missing"},
+	}}
+
+	if err := Link(cfg, false); err == nil {
+		t.Error("expected an error when a dotfile can't be linked")
+	}
+	if utils.GetType(path.Join(home, ".ok")) != utils.IsSymlink {
+		t.Error("working dotfile was not linked")
+	}
+
+	cfg.Dots = cfg.Dots[:1]
+	if err := Link(cfg, false); err != nil {
+		t.Errorf("all linked: unexpected error %v", err)
 	}
 }

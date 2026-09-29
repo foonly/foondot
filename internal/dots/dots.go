@@ -1,6 +1,7 @@
 package dots
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path"
@@ -20,23 +21,36 @@ import (
  *
  * @param cfg The configuration object containing dotfile definitions and settings.
  * @param force Whether to force the linking process, overriding existing files if necessary.
+ * @return error Set if any dotfile couldn't be linked or any old link couldn't be removed.
  */
-func Link(cfg config.Config, force bool) {
+func Link(cfg config.Config, force bool) error {
 	config.ReadDotsData()
 
 	dotFiles, complete := filterDots(cfg.Dotfiles, cfg.Dots)
 
+	var failures []string
 	if complete {
-		cleanTargets(path.Join(xdg.Home, cfg.Dotfiles), dotFiles)
+		if !cleanTargets(path.Join(xdg.Home, cfg.Dotfiles), dotFiles) {
+			failures = append(failures, "some old links couldn't be removed")
+		}
 	} else {
 		utils.PrintError("Some sources could not be read, skipping removal of old links")
+		failures = append(failures, "some sources couldn't be read")
 	}
 
 	numberLinked := 0
+	numberFailed := 0
 	for _, element := range dotFiles {
-		if handleDot(element, cfg.Dotfiles, force) {
+		linked, err := handleDot(element, cfg.Dotfiles, force)
+		if err != nil {
+			utils.PrintError("Couldn't link", targetPath(element.Target), err.Error())
+			numberFailed++
+		} else if linked {
 			numberLinked++
 		}
+	}
+	if numberFailed > 0 {
+		failures = append(failures, fmt.Sprintf("%d of %d dotfiles couldn't be linked", numberFailed, len(dotFiles)))
 	}
 
 	config.WriteDotsData()
@@ -51,6 +65,11 @@ func Link(cfg config.Config, force bool) {
 	} else {
 		fmt.Fprintf(os.Stdout, "%d of %d dotfiles linked.\n", numberLinked, len(dotFiles))
 	}
+
+	if len(failures) > 0 {
+		return errors.New(strings.Join(failures, ", "))
+	}
+	return nil
 }
 
 /**
@@ -101,16 +120,15 @@ func filterDots(dotfileFolder string, dots []config.Item) ([]config.Item, bool) 
 * @param item The dotfile item to handle.
 * @param dotfiles The base directory for dotfiles.
 * @param force Whether to force relinking and move existing files.
-* @return True if the link was successfully created, false otherwise.
+* @return True if a new link was created, false if it failed or already existed.
+* @return error Set if the dotfile couldn't be linked.
  */
-func handleDot(item config.Item, dotfiles string, force bool) bool {
-
+func handleDot(item config.Item, dotfiles string, force bool) (bool, error) {
 	source := path.Join(xdg.Home, dotfiles, item.Source)
 	target := targetPath(item.Target)
 
 	if err := prepareTargetSource(target, source, force); err != nil {
-		utils.PrintError("Skipping", target, err.Error())
-		return false
+		return false, err
 	}
 
 	return doLink(source, target)
@@ -144,8 +162,10 @@ func targetPath(target string) string {
  *
  * @param dotfilesDir The absolute path to the dotfiles directory.
  * @param dots A slice of Item structs representing the current dotfile items.
+ * @return False if any link couldn't be removed.
  */
-func cleanTargets(dotfilesDir string, dots []config.Item) {
+func cleanTargets(dotfilesDir string, dots []config.Item) bool {
+	ok := true
 	var targets []string
 	// Create a list of targets from defined dots.
 	for _, item := range dots {
@@ -165,13 +185,14 @@ func cleanTargets(dotfilesDir string, dots []config.Item) {
 			err := os.Remove(target)
 			if err != nil {
 				utils.PrintError("Failed to remove link", target, err.Error())
+				ok = false
 				return false
 			}
 			return true
 		}
 		return false
 	})
-
+	return ok
 }
 
 /**
@@ -223,12 +244,6 @@ func prepareTargetSource(target string, source string, force bool) error {
 			}
 		}
 	case utils.IsDirectory, utils.IsFile:
-		isDirFile := "file"
-		if targetType == utils.IsDirectory {
-			isDirFile = "directory"
-		}
-		utils.PrintError("Target is a "+isDirFile, target)
-
 		sourceType := utils.GetType(source)
 		if sourceType == utils.NotExists {
 			if err := makeDir(path.Dir(source)); err != nil {
@@ -248,7 +263,7 @@ func prepareTargetSource(target string, source string, force bool) error {
 			}
 			utils.PrintMessage("Both source and target exist, moved target to backup", target, backup)
 		} else {
-			utils.PrintError("Both source and target exist. Skipping", source, "Use -f to override.")
+			return fmt.Errorf("both source and target exist, use -f to move the target to the backup folder")
 		}
 	}
 	return nil
@@ -293,36 +308,70 @@ func backupPath(target string) string {
 
 /**
  * Creates a symbolic link from source to target. Checks if source exists and
- * is not a symlink. Checks if the target does not exist and the source is
- * either a directory or a file.
+ * is not a symlink. Checks if the target does not exist yet, or already links
+ * to the source.
  *
  * @param source The path to the source file or directory.
  * @param target The path to the target location for the symlink.
- * @return True if the link was successfully created, false otherwise.
+ * @return True if a new link was created, false if it failed or already existed.
+ * @return error Set if the link couldn't be created.
  */
-func doLink(source string, target string) bool {
-	sourceType := utils.GetType(source)
-	targetType := utils.GetType(target)
-
-	if sourceType == utils.NotExists {
-		utils.PrintError("Source does not exist", source)
-		return false
-	}
-	if sourceType == utils.IsSymlink {
-		utils.PrintError("Source is a symlink", source)
-		return false
+func doLink(source string, target string) (bool, error) {
+	switch utils.GetType(source) {
+	case utils.NotExists:
+		return false, fmt.Errorf("source %s does not exist", source)
+	case utils.IsSymlink:
+		return false, fmt.Errorf("source %s is a symlink", source)
+	case utils.IsFailed:
+		return false, fmt.Errorf("couldn't access source %s", source)
 	}
 
-	if targetType == utils.NotExists && (sourceType == utils.IsDirectory || sourceType == utils.IsFile) {
-		if err := os.Symlink(source, target); err != nil {
-			utils.PrintError("Error linking", target, err.Error())
-			return false
+	switch utils.GetType(target) {
+	case utils.NotExists:
+	case utils.IsSymlink:
+		if !linksTo(target, source) {
+			return false, fmt.Errorf("target is a link to another location, use -f to replace it")
 		}
-		utils.PrintMessage("Linking", source, target)
-		if !slices.Contains(config.DotsData, target) {
-			config.DotsData = append(config.DotsData, target)
-		}
-		return true
+		// Already linked. Track it in case the dots data was lost.
+		track(target)
+		return false, nil
+	default:
+		return false, fmt.Errorf("target already exists")
 	}
-	return false
+
+	if err := os.Symlink(source, target); err != nil {
+		return false, err
+	}
+	utils.PrintMessage("Linking", source, target)
+	track(target)
+	return true, nil
+}
+
+/**
+ * Adds a target to the tracked links, if it isn't tracked yet.
+ *
+ * @param target The path to the link.
+ */
+func track(target string) {
+	if !slices.Contains(config.DotsData, target) {
+		config.DotsData = append(config.DotsData, target)
+	}
+}
+
+/**
+ * Checks whether a symlink points to the given path.
+ *
+ * @param link The path to the symlink.
+ * @param dest The expected absolute destination.
+ * @return True if the symlink points to dest, false otherwise.
+ */
+func linksTo(link string, dest string) bool {
+	actual, err := os.Readlink(link)
+	if err != nil {
+		return false
+	}
+	if !path.IsAbs(actual) {
+		actual = path.Join(path.Dir(link), actual)
+	}
+	return path.Clean(actual) == path.Clean(dest)
 }
