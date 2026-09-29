@@ -4,6 +4,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -83,12 +84,14 @@ func run(args []string, env environment) int {
 	}
 
 	if *showVersion {
-		fmt.Fprintf(os.Stdout, "Version: %s\nHostname: %s\n", env.version, env.hostname)
+		printVersion(os.Stdout, env)
 		return 0
 	}
 
-	// Without a command, do nothing but show usage.
+	// Without a command, do nothing but show the version and usage.
 	if command == "" {
+		printVersion(flags.Output(), env)
+		fmt.Fprintln(flags.Output())
 		flags.Usage()
 		return 0
 	}
@@ -153,6 +156,11 @@ func run(args []string, env environment) int {
 		}
 	}
 	return 0
+}
+
+// printVersion prints the version and hostname, as shown by -v.
+func printVersion(w io.Writer, env environment) {
+	fmt.Fprintf(w, "Version: %s\nHostname: %s\n", env.version, env.hostname)
 }
 
 // parseFlags parses args into flags. It returns false with the exit code if

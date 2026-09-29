@@ -1,8 +1,10 @@
 package foondot
 
 import (
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"foonly.dev/foondot/internal/utils"
@@ -134,5 +136,36 @@ func TestRunSyncFailure(t *testing.T) {
 	// The dotfiles folder is not a git repository.
 	if got := run([]string{"sync", "-c", configFile}, env); got != 1 {
 		t.Errorf("exit code = %d, want 1", got)
+	}
+}
+
+// captureStderr runs f and returns what it wrote to standard error.
+func captureStderr(t *testing.T, f func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stderr := os.Stderr
+	os.Stderr = w
+	defer func() { os.Stderr = stderr }()
+
+	f()
+
+	w.Close()
+	out, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(out)
+}
+
+func TestRunNoCommandShowsVersion(t *testing.T) {
+	env := testEnv(t)
+
+	out := captureStderr(t, func() { run(nil, env) })
+
+	if !strings.HasPrefix(out, "Version: test\nHostname: thishost\n\nUsage: foondot") {
+		t.Errorf("output doesn't start with the version followed by usage:\n%s", out)
 	}
 }

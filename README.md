@@ -69,7 +69,7 @@ Since `sync` commits every change in your `dotfiles` directory, including new fi
 
 ## Usage
 
-Foondot uses a subcommand structure. Running it without a command only prints usage and does nothing else. Flags can be given before or after the command.
+Foondot uses a subcommand structure. Running it without a command only prints the version, hostname and usage, and does nothing else. Flags can be given before or after the command.
 
 ### Command-Line Options:
 
