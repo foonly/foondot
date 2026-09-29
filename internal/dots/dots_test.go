@@ -4,6 +4,7 @@ import (
 	"os"
 	"path"
 	"slices"
+	"strconv"
 	"testing"
 
 	"foonly.dev/foondot/internal/config"
@@ -19,11 +20,12 @@ func setupHome(t *testing.T) (home string, dotfilesDir string) {
 	dotfilesDir = path.Join(home, "dotfiles")
 	mkdir(t, dotfilesDir)
 
-	oldHome, oldHostname, oldData := xdg.Home, config.Hostname, config.DotsData
+	oldHome, oldDataHome, oldHostname, oldData := xdg.Home, xdg.DataHome, config.Hostname, config.DotsData
 	t.Cleanup(func() {
-		xdg.Home, config.Hostname, config.DotsData = oldHome, oldHostname, oldData
+		xdg.Home, xdg.DataHome, config.Hostname, config.DotsData = oldHome, oldDataHome, oldHostname, oldData
 	})
 	xdg.Home = home
+	xdg.DataHome = path.Join(home, ".local", "share")
 	config.Hostname = "thishost"
 	config.DotsData = []string{}
 	return home, dotfilesDir
@@ -38,10 +40,24 @@ func mkdir(t *testing.T, dir string) {
 
 func writeFile(t *testing.T, file string) {
 	t.Helper()
+	writeContent(t, file, "content")
+}
+
+func writeContent(t *testing.T, file, content string) {
+	t.Helper()
 	mkdir(t, path.Dir(file))
-	if err := os.WriteFile(file, []byte("content"), 0644); err != nil {
+	if err := os.WriteFile(file, []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func readContent(t *testing.T, file string) string {
+	t.Helper()
+	data, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
 }
 
 func symlink(t *testing.T, source, target string) {
@@ -207,5 +223,83 @@ func TestLinkAbsoluteTarget(t *testing.T) {
 	cleanTargets(dotfilesDir, []config.Item{{Source: "conf", Target: outside}})
 	if !slices.Equal(config.DotsData, []string{outside}) || utils.GetType(outside) != utils.IsSymlink {
 		t.Error("cleanup removed a current absolute target")
+	}
+}
+
+func TestHandleDotMovesTargetToMissingSource(t *testing.T) {
+	home, dotfilesDir := setupHome(t)
+	target := path.Join(home, ".config", "app")
+	writeContent(t, target, "existing")
+
+	if !handleDot(config.Item{Source: "app/config", Target: ".config/app"}, "dotfiles", false) {
+		t.Fatal("expected link to be created")
+	}
+
+	source := path.Join(dotfilesDir, "app", "config")
+	if got := readContent(t, source); got != "existing" {
+		t.Errorf("source = %q, want the former target content", got)
+	}
+	if utils.GetType(target) != utils.IsSymlink {
+		t.Error("target is not a symlink")
+	}
+}
+
+func TestHandleDotSkipsExistingWithoutForce(t *testing.T) {
+	home, dotfilesDir := setupHome(t)
+	writeContent(t, path.Join(dotfilesDir, "bashrc"), "source")
+	target := path.Join(home, ".bashrc")
+	writeContent(t, target, "target")
+
+	if handleDot(config.Item{Source: "bashrc", Target: ".bashrc"}, "dotfiles", false) {
+		t.Error("expected no link without force")
+	}
+	if got := readContent(t, target); got != "target" {
+		t.Errorf("target = %q, want it untouched", got)
+	}
+}
+
+func TestHandleDotForceBacksUpOutsideDotfiles(t *testing.T) {
+	home, dotfilesDir := setupHome(t)
+	writeContent(t, path.Join(dotfilesDir, "bashrc"), "source")
+	target := path.Join(home, ".bashrc")
+	backup := path.Join(config.BackupFolder(), target)
+	item := config.Item{Source: "bashrc", Target: ".bashrc"}
+
+	for i, want := range []string{backup, backup + ".1"} {
+		writeContent(t, target+".tmp", "target "+strconv.Itoa(i))
+		os.Remove(target)
+		if err := os.Rename(target+".tmp", target); err != nil {
+			t.Fatal(err)
+		}
+
+		if !handleDot(item, "dotfiles", true) {
+			t.Fatalf("run %d: expected link to be created", i)
+		}
+		if got := readContent(t, want); got != "target "+strconv.Itoa(i) {
+			t.Errorf("run %d: backup %s = %q", i, want, got)
+		}
+	}
+
+	entries, err := os.ReadDir(dotfilesDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Errorf("dotfiles folder contains %d entries, want only the source", len(entries))
+	}
+}
+
+func TestPrepareTargetSourceReportsErrors(t *testing.T) {
+	home, dotfilesDir := setupHome(t)
+	writeFile(t, path.Join(dotfilesDir, "conf"))
+	// The target's parent is a file, so its directory can't be created.
+	writeFile(t, path.Join(home, "blocker"))
+	target := path.Join(home, "blocker", "conf")
+
+	if err := prepareTargetSource(target, path.Join(dotfilesDir, "conf"), false); err == nil {
+		t.Error("expected an error when the target directory can't be created")
+	}
+	if handleDot(config.Item{Source: "conf", Target: "blocker/conf"}, "dotfiles", false) {
+		t.Error("expected handleDot to fail")
 	}
 }

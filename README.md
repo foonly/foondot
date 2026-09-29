@@ -44,7 +44,7 @@ dots = [
 
 Creates symlinks from the `source` files/directories in your `dotfiles` directory to the `target` locations specified in the configuration file.
 
-- **Handling Conflicts**: If a file or directory already exists at the `target` location, Foondot will move the existing file/directory into your `dotfiles` directory before linking. If the source file/directory also exists, it appends `.conflict` to the name. For example, if `.config/program` already exists, it will be moved to `dotfiles/program.conflict`.
+- **Handling Conflicts**: If a file or directory already exists at the `target` location, Foondot will move the existing file/directory into your `dotfiles` directory before linking. If the source file/directory also exists, Foondot skips the entry, unless you use `-f`. With `-f`, the existing target is moved to a backup folder outside your `dotfiles` directory, so it is never synced: `$XDG_DATA_HOME/foondot/backup/` (usually `~/.local/share/foondot/backup/`), followed by the full target path. For example, `~/.config/program` is moved to `~/.local/share/foondot/backup/home/<user>/.config/program`. If a backup already exists, a number is appended.
 - **Removing Symlinks**: Foondot tries to clean up links when they are removed from the config or no longer active for your hostname. It does this by keeping track of all the links it has written. Links that no longer point into your `dotfiles` directory are left alone, and cleanup is skipped if a wildcard source can't be read.
 - **Using Wildcards**: If the source path ends in /\*, the individual files in the folder are linked to the target location. This is useful if you want to combine different source paths into the same target. Note however that if using this, you need to re-link if you add or remove files or folders.
 
@@ -71,7 +71,7 @@ Foondot uses a subcommand structure. Running it without a command only prints us
 
 ### Command-Line Options:
 
-- `-f`: Force relinking and move conflicting files (applies to `link` command).
+- `-f`: Force relinking and move conflicting files to the backup folder (applies to `link` command).
 - `-c <path>`: Specify the location of an alternate configuration file.
 - `-v`: Show the version and hostname.
 - `-cc`: Enable color output.

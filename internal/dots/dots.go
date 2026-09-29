@@ -108,7 +108,10 @@ func handleDot(item config.Item, dotfiles string, force bool) bool {
 	source := path.Join(xdg.Home, dotfiles, item.Source)
 	target := targetPath(item.Target)
 
-	prepareTargetSource(target, source, force)
+	if err := prepareTargetSource(target, source, force); err != nil {
+		utils.PrintError("Skipping", target, err.Error())
+		return false
+	}
 
 	return doLink(source, target)
 }
@@ -194,75 +197,98 @@ func pointsInto(link string, dir string) bool {
  * directories, removing existing symlinks (if force is enabled), and moving
  * existing files or directories out of the way to avoid conflicts.
  *
+ * An existing target is moved to the source location if the source doesn't
+ * exist yet. If both exist and force is enabled, the target is moved to the
+ * backup folder instead, which is outside of the dotfiles repository so the
+ * backup is never synced.
+ *
  * @param target The path to the target location for the symlink.
  * @param source The path to the source file or directory that will be linked.
  * @param force Whether to force relinking, moving existing files if necessary.
+ * @return error Set if the target location couldn't be prepared.
  */
-func prepareTargetSource(target string, source string, force bool) {
-	targetDir := path.Dir(target)
-	if utils.GetType(targetDir) == utils.NotExists {
-		err := os.MkdirAll(targetDir, os.ModePerm)
-		if err == nil {
-			// No error means directory was created.
-			utils.PrintMessage("Created directory", targetDir)
-		}
+func prepareTargetSource(target string, source string, force bool) error {
+	if err := makeDir(path.Dir(target)); err != nil {
+		return err
 	}
 
 	targetType := utils.GetType(target)
-
-	if targetType == utils.IsSymlink && force {
-		// Remove target if it's a symlink.
-		os.Remove(target)
-	}
-	if targetType == utils.IsDirectory || targetType == utils.IsFile {
-		// Target is not a symlink.
+	switch targetType {
+	case utils.IsFailed:
+		return fmt.Errorf("couldn't access %s", target)
+	case utils.IsSymlink:
+		if force {
+			if err := os.Remove(target); err != nil {
+				return fmt.Errorf("couldn't remove link: %w", err)
+			}
+		}
+	case utils.IsDirectory, utils.IsFile:
 		isDirFile := "file"
 		if targetType == utils.IsDirectory {
 			isDirFile = "directory"
 		}
 		utils.PrintError("Target is a "+isDirFile, target)
+
 		sourceType := utils.GetType(source)
-
 		if sourceType == utils.NotExists {
-			sourceDir := path.Dir(source)
-			if utils.GetType(sourceDir) == utils.NotExists {
-				err := os.MkdirAll(sourceDir, os.ModePerm)
-				if err == nil {
-					// No error means directory was created.
-					utils.PrintMessage("Created directory", sourceDir)
-				} else {
-					utils.PrintError("Couldn't create directory", sourceDir)
-				}
+			if err := makeDir(path.Dir(source)); err != nil {
+				return err
 			}
-
-			moveErr := os.Rename(target, source)
-			if moveErr == nil {
-				utils.PrintMessage("Moving before linking", target, source)
+			if err := os.Rename(target, source); err != nil {
+				return fmt.Errorf("couldn't move target to source: %w", err)
 			}
+			utils.PrintMessage("Moving before linking", target, source)
 		} else if force {
-			utils.PrintMessage("force", source)
-			sourceConflict := source + ".conflict"
-			count := 0
-			for {
-				// Find an available filename
-				conflictType := utils.GetType(sourceConflict)
-				if conflictType == utils.NotExists {
-					break
-				}
-				count++
-				sourceConflict = source + ".conflict." + strconv.Itoa(count)
+			backup := backupPath(target)
+			if err := makeDir(path.Dir(backup)); err != nil {
+				return err
 			}
-
-			err := os.Rename(target, sourceConflict)
-			if err == nil {
-				utils.PrintMessage("Both source and target exist, forcing move out of the way", target, sourceConflict)
-			} else {
-				utils.PrintError("Couldn't backup target, skipping", target)
+			if err := os.Rename(target, backup); err != nil {
+				return fmt.Errorf("couldn't back up target: %w", err)
 			}
+			utils.PrintMessage("Both source and target exist, moved target to backup", target, backup)
 		} else {
 			utils.PrintError("Both source and target exist. Skipping", source, "Use -f to override.")
 		}
 	}
+	return nil
+}
+
+/**
+ * Creates a directory and its parents if it doesn't exist yet.
+ *
+ * @param dir The path to the directory.
+ * @return error Set if the directory couldn't be created.
+ */
+func makeDir(dir string) error {
+	switch utils.GetType(dir) {
+	case utils.IsDirectory, utils.IsSymlink:
+		return nil
+	case utils.IsFile:
+		return fmt.Errorf("%s is not a directory", dir)
+	}
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("couldn't create directory: %w", err)
+	}
+	utils.PrintMessage("Created directory", dir)
+	return nil
+}
+
+/**
+ * Returns an unused backup location for a target. Backups mirror the target's
+ * absolute path inside the backup folder, with a number appended if a backup
+ * of the same target already exists.
+ *
+ * @param target The absolute path to the target.
+ * @return The path to back up the target to.
+ */
+func backupPath(target string) string {
+	base := path.Join(config.BackupFolder(), target)
+	backup := base
+	for count := 1; utils.GetType(backup) != utils.NotExists; count++ {
+		backup = base + "." + strconv.Itoa(count)
+	}
+	return backup
 }
 
 /**
@@ -288,16 +314,15 @@ func doLink(source string, target string) bool {
 	}
 
 	if targetType == utils.NotExists && (sourceType == utils.IsDirectory || sourceType == utils.IsFile) {
-		err := os.Symlink(source, target)
-		utils.PrintMessage("Linking", source, target)
-		if err == nil {
-			if !slices.Contains(config.DotsData, target) {
-				config.DotsData = append(config.DotsData, target)
-			}
-		} else {
-			utils.PrintError("Error linking", target)
+		if err := os.Symlink(source, target); err != nil {
+			utils.PrintError("Error linking", target, err.Error())
+			return false
 		}
-		return err == nil
+		utils.PrintMessage("Linking", source, target)
+		if !slices.Contains(config.DotsData, target) {
+			config.DotsData = append(config.DotsData, target)
+		}
+		return true
 	}
 	return false
 }

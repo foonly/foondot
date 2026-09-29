@@ -20,6 +20,7 @@ const (
 	DefaultConfigFileName = "foondot.toml"
 	dataFolderName        = "foondot"
 	dotsDataFileName      = "dots.json"
+	backupFolderName      = "backup"
 )
 
 /**
@@ -180,6 +181,16 @@ func WriteDotsData() {
 		utils.PrintError("Error writing dots data", filename, err.Error())
 		os.Exit(4)
 	}
+}
+
+/**
+ * Returns the folder where targets are backed up when forcing a relink.
+ * The folder is not created.
+ *
+ * @return string The full path to the backup folder.
+ */
+func BackupFolder() string {
+	return path.Join(xdg.DataHome, dataFolderName, backupFolderName)
 }
 
 /**
