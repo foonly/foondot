@@ -106,11 +106,25 @@ func filterDots(dotfileFolder string, dots []config.Item) ([]config.Item, bool) 
 func handleDot(item config.Item, dotfiles string, force bool) bool {
 
 	source := path.Join(xdg.Home, dotfiles, item.Source)
-	target := path.Join(xdg.Home, item.Target)
+	target := targetPath(item.Target)
 
 	prepareTargetSource(target, source, force)
 
 	return doLink(source, target)
+}
+
+/**
+ * Resolves a configured target to an absolute path. Absolute targets are used
+ * as is, relative targets are relative to the home directory.
+ *
+ * @param target The target as given in the configuration.
+ * @return The absolute path to the target.
+ */
+func targetPath(target string) string {
+	if path.IsAbs(target) {
+		return path.Clean(target)
+	}
+	return path.Join(xdg.Home, target)
 }
 
 /**
@@ -132,7 +146,7 @@ func cleanTargets(dotfilesDir string, dots []config.Item) {
 	var targets []string
 	// Create a list of targets from defined dots.
 	for _, item := range dots {
-		targets = append(targets, path.Join(xdg.Home, item.Target))
+		targets = append(targets, targetPath(item.Target))
 	}
 
 	config.DotsData = slices.DeleteFunc(config.DotsData, func(target string) bool {

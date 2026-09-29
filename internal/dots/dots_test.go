@@ -176,3 +176,36 @@ func TestPointsInto(t *testing.T) {
 		t.Error("nonexistent path treated as a link into dotfiles")
 	}
 }
+
+func TestTargetPath(t *testing.T) {
+	home, _ := setupHome(t)
+
+	if got, want := targetPath(".bashrc"), path.Join(home, ".bashrc"); got != want {
+		t.Errorf("relative target: got %s, want %s", got, want)
+	}
+	if got, want := targetPath("/etc/foo/"), "/etc/foo"; got != want {
+		t.Errorf("absolute target: got %s, want %s", got, want)
+	}
+}
+
+func TestLinkAbsoluteTarget(t *testing.T) {
+	home, dotfilesDir := setupHome(t)
+	writeFile(t, path.Join(dotfilesDir, "conf"))
+	// An absolute target outside the home directory.
+	outside := path.Join(t.TempDir(), "etc", "conf")
+
+	handleDot(config.Item{Source: "conf", Target: outside}, "dotfiles", false)
+
+	if utils.GetType(outside) != utils.IsSymlink {
+		t.Errorf("expected symlink at %s", outside)
+	}
+	if utils.GetType(path.Join(home, outside)) != utils.NotExists {
+		t.Error("absolute target was created under the home directory")
+	}
+
+	// The absolute target must count as current, so cleanup keeps it.
+	cleanTargets(dotfilesDir, []config.Item{{Source: "conf", Target: outside}})
+	if !slices.Equal(config.DotsData, []string{outside}) || utils.GetType(outside) != utils.IsSymlink {
+		t.Error("cleanup removed a current absolute target")
+	}
+}
