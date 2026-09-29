@@ -1,6 +1,6 @@
 # Foondot Code Quality and Security Audit
 
-Audit of foondot 0.12.0 (`59e8ebd`), updated 2026-09-29 after four rounds of fixes.
+Audit of foondot 0.12.0 (`59e8ebd`), updated 2026-09-29 after five rounds of fixes. All findings are fixed.
 
 ## Summary
 
@@ -10,7 +10,7 @@ Foondot is small (about 1,000 lines of Go) and has few dependencies. `go vet` an
 - link cleanup that could remove more than it should
 - a default command that committed and pushed without being asked
 
-These are fixed, along with absolute targets, git output parsing, config checks, error reporting and exit codes, the link tracking file and the release workflow. Each fix is covered by tests. What remains open is mostly structure and style, plus reviewing files before `sync` publishes them.
+All 21 findings are fixed, and each fix is covered by tests that CI runs before every release. A few deliberate limitations are listed at the end.
 
 Severity is given for a single-user tool that runs with your own permissions on your own config and dotfiles repository. The config file is trusted input. Repository contents are semi-trusted, because they may come from another machine through `sync`.
 
@@ -29,12 +29,12 @@ Severity is given for a single-user tool that runs with your own permissions on 
 | 11 | Repository detection assumes a plain `.git` folder | Medium | Fixed `8e40d72` |
 | 12 | Garbled output when resolving conflicts | Low | Fixed `2264e44` |
 | 13 | Filesystem errors are ignored during linking | Medium | Fixed `0934a34` |
-| 14 | Backups and moved files end up in the synced repository | Medium | Partly fixed `0934a34` |
+| 14 | Backups and moved files end up in the synced repository | Medium | Fixed `0934a34`, `d7347e1` |
 | 15 | Link tracking file is fragile | Low | Fixed `d986b3b` |
 | 16 | Git errors carry no detail | Low | Fixed `2264e44` |
-| 17 | Structure: `os.Exit` in internal packages, global state | Medium | Open |
-| 18 | Tests only cover the fixed areas | Medium | Partly fixed |
-| 19 | Go style issues | Low | Partly fixed |
+| 17 | Structure: `os.Exit` in internal packages, global state | Medium | Fixed `8b442bc` |
+| 18 | Tests only cover the fixed areas | Medium | Fixed `abf4639` |
+| 19 | Go style issues | Low | Fixed `8b442bc` |
 | 20 | Release workflow | Low | Fixed `bdfd8b5` |
 | 21 | README is out of date | Low | Fixed `bb19492`, `db24da6` |
 
@@ -145,7 +145,7 @@ Tests: `TestCheckRepo`, `TestIsRebasingWorktree`.
 
 `PrintMessage` uses only its first three arguments. `PrintMessage("Auto-resolving conflict in", file, "using", strategy, "version")` printed `Auto-resolving conflict in: <file> => using`. Also, `"...Applying strategy:"` followed by the value printed a double colon.
 
-**Fix:** both calls now pass three arguments, so the output reads `Auto-resolving conflict in: <file> => using local version`. The print helpers themselves are still fragile (see #19).
+**Fix:** the output now reads `Auto-resolving conflict using local version: <file>`. The print helpers now have fixed parameters, so this can't happen again (see #19).
 
 ### 13. Filesystem errors are ignored during linking
 
@@ -165,11 +165,18 @@ Moves across filesystems still fail (`EXDEV`), but the error is now reported ins
 
 Tests: `TestHandleDot*`, `TestPrepareTargetSourceReportsErrors`.
 
-### 14. Backups end up in the synced repository
+### 14. Backups and moved files end up in the synced repository
 
-With `-f`, `link` moved an existing target to `<source>.conflict` inside the dotfiles folder, and the next `sync` committed and pushed it.
+- With `-f`, `link` moved an existing target to `<source>.conflict` inside the dotfiles folder, and the next `sync` committed and pushed it.
+- When a target exists but its source doesn't, `link` moves the target into the dotfiles folder. That's how you add an existing file to your dotfiles. But `sync` stages everything with `git add -A` and pushes, so a file that happened to exist at a target path, possibly containing secrets, was published by the next sync with no way to review it first.
 
-**Fix:** backups are written to `$XDG_DATA_HOME/foondot/backup/<target path>`, outside the repository, with a number appended when a backup already exists. Test: `TestHandleDotForceBacksUpOutsideDotfiles`. Moving a target into the dotfiles folder when its source doesn't exist yet is intended, and remains open below.
+**Fix:**
+
+- Backups are written to `$XDG_DATA_HOME/foondot/backup/<target path>`, outside the repository, with a number appended when a backup already exists (`0934a34`).
+- `foondot sync -n` lists what `sync` would commit and push, including untracked files, and runs the conflict-marker check, without pulling, staging, committing or pushing anything (`d7347e1`). `-n` with `link` is a usage error, so it can't link without warning. The README recommends the dry run after `link` has moved files.
+- Moving targets into the dotfiles folder is intended and unchanged.
+
+Tests: `TestHandleDotForceBacksUpOutsideDotfiles`, `TestSyncDryRun*`, `TestDescribeStatus`.
 
 ### 15. Link tracking file is fragile
 
@@ -183,6 +190,44 @@ With `-f`, `link` moved an existing target to `<source>.conflict` inside the dot
 `stageAll`, `commit` and similar helpers discarded git's stderr, so a failure showed up as `exit status 1`. For example, a missing git identity was reported only as "failed to commit: exit status 1".
 
 **Fix:** all git commands except `pull` and `push`, which stream their output to the terminal, now include git's message in the returned error. Tests: `TestCommitErrorIncludesGitMessage`, `TestGitOutputErrorIncludesStderr`.
+
+### 17. Structure: `os.Exit` in internal packages, global state
+
+- `config` called `os.Exit` from inside the package, which made it hard to test and to reuse.
+- `config.Hostname`, `config.Version`, `config.DotsData`, `utils.Color` and the use of `xdg.Home` were package-level state. Tests had to save and restore them.
+
+**Fix:**
+
+- `config` returns errors, and only `cmd/foondot` decides exit codes.
+- Linking state lives in a `linker` struct built from `dots.Options` (home, hostname, data folder, force). The tracked links are passed in and out explicitly.
+- `git.Sync` takes the dotfiles folder and `git.Options`.
+- `xdg` and `os.Hostname` are only read in `Execute`, which calls a `run(args, env)` function that tests can drive with temporary folders.
+- `utils.Color` remains global on purpose: it's a process-wide output setting that's set once before anything is printed.
+
+### 18. Tests only cover the fixed areas
+
+**Fix:** besides the tests added with each fix, there are now tests for:
+
+- loading and decoding the config file (`TestReadConfig*`, `TestCreateDefaultConfig`)
+- `Sync` end to end against a real remote: pushing, pulling, nothing to sync, conflict markers, the dry run (`TestSync*`)
+- command-line handling: usage errors, help, version, default config, flags after the command, exit codes (`TestRun*`)
+
+### 19. Go style issues
+
+- Doc comments used `/** ... */` with ` * ` prefixes.
+- File types were plain integer constants.
+- `PrintMessage` and `PrintError` picked a format from the number of arguments, silently dropping extras (this caused #12), and panicked when called without arguments.
+- `path` was used for filesystem paths.
+- `os.IsNotExist` and redundant `[]byte(data)` conversions were used.
+- When `os.Hostname()` failed, the hostname became `""`.
+
+**Fix:**
+
+- All comments are Go doc comments.
+- File types are a named `FileType`.
+- The print helpers have fixed parameters (`PrintValue`, `PrintChange`, `PrintError`, `PrintErrorCause`, and so on).
+- `path/filepath` is used throughout, along with `errors.Is(err, fs.ErrNotExist)`.
+- The hostname falls back to `"unknown"`.
 
 ### 20. Release workflow
 
@@ -204,40 +249,13 @@ The README named `link` as the default in one place and `sync` in another. It di
 
 **Fix:** the README names no default command, documents `sync_strategy` and each strategy, and describes the cleanup, config-error and conflict-marker behaviour.
 
-## Open
+## Known limitations
 
-### 14. Moved files end up in the synced repository (partly fixed)
+These were considered and left as they are:
 
-**Where:** `internal/dots/dots.go` (`prepareTargetSource`) together with `sync`
-
-When a target exists but its source doesn't, `link` moves the target into the dotfiles folder. That's how you add an existing file to your dotfiles. `sync` then stages everything with `git add -A` and pushes. A file that happened to exist at a target path, and possibly contains secrets, is published by the next sync without being reviewed. Backups made with `-f` no longer end up there (see the fixed section).
-
-**Recommendation:** have `sync` list new files before committing, or offer a `--dry-run`.
-
-### 17. Structure: `os.Exit` in internal packages, global state
-
-- `config` calls `os.Exit` from inside the package (`ReadConfig`, `CreateDefaultConfig`, `ReadDotsData`, `WriteDotsData`), which makes it hard to test and to reuse. `dots.Link` and `git.Sync` return errors.
-- `config.Hostname`, `config.DotsData`, `utils.Color` and the use of `xdg.Home` are package-level state. The new tests have to save and restore them.
-
-**Recommendation:** return errors to `cmd/foondot`, which decides the exit code. Pass the hostname, home and dotfiles folders, and the tracked links in a small state struct.
-
-### 18. Tests only cover the fixed areas (partly fixed)
-
-Tests now cover filtering, cleanup, link ownership, absolute targets, moving targets and backups, error reporting, `Link` as a whole, the link tracking file, the conflict strategies, repository detection, git output parsing and errors, the conflict-marker check and `sync_strategy` validation. CI runs them before each release. Still missing:
-
-- loading and decoding the config file
-- the `Sync` flow end to end
-- command-line argument handling
-
-### 19. Go style issues (partly fixed)
-
-Uses of `os.IsNotExist` and redundant `[]byte(data)` conversions were removed while fixing other items. Remaining:
-
-- Doc comments use `/** ... */` with ` * ` prefixes. `go doc` shows the asterisks, and `git.go` already uses `//` comments.
-- File types are plain integer constants. A named type (`type FileType int`) would let the compiler catch misuse.
-- `PrintMessage` and `PrintError` pick a format from the number of arguments. Extra arguments are silently dropped (this caused #12), and calling them with no arguments panics.
-- `path` is used where `path/filepath` belongs for filesystem paths.
-- When `os.Hostname()` fails, the hostname becomes `""` instead of keeping the `"unknown"` default (`cmd/foondot/main.go:49`).
+- **Moves across filesystems fail** (`EXDEV`) when the dotfiles folder, a target or the backup folder are on different filesystems. The error is reported, but there is no copy fallback, since all three are normally under `$HOME` (#13).
+- **Newer GitHub Action majors:** actions/checkout and actions/setup-go are pinned to the latest v4 and v5 releases. v7 of both is available, so upgrading is a separate decision (#20).
+- **Global color setting:** `utils.Color` is the one remaining package-level variable (#17).
 
 ## Not considered an issue
 
