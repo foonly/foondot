@@ -1,6 +1,6 @@
 # Foondot Code Quality and Security Audit
 
-Audit of foondot 0.12.0 (`59e8ebd`), updated 2026-09-29 after two rounds of fixes.
+Audit of foondot 0.12.0 (`59e8ebd`), updated 2026-09-29 after three rounds of fixes.
 
 ## Summary
 
@@ -10,7 +10,7 @@ Foondot is small (about 1,000 lines of Go) and has few dependencies. `go vet` an
 - link cleanup that could remove more than it should
 - a default command that committed and pushed without being asked
 
-These are fixed, together with absolute targets, git output parsing and config checks, and each fix is covered by tests. The remaining open findings are about error handling, structure and the release workflow, and are listed below by priority.
+These are fixed, together with absolute targets, git output parsing, config checks and error reporting, and each fix is covered by tests. The remaining open findings are about error handling, structure and the release workflow, and are listed below by priority.
 
 Severity is given for a single-user tool that runs with your own permissions on your own config and dotfiles repository. The config file is trusted input. Repository contents are semi-trusted, because they may come from another machine through `sync`.
 
@@ -27,11 +27,11 @@ Severity is given for a single-user tool that runs with your own permissions on 
 | 9 | Filenames passed to git without `--` | Medium | Fixed `360630a` |
 | 10 | `sync_strategy` value is not checked | Medium | Fixed `8da099b` |
 | 11 | Repository detection assumes a plain `.git` folder | Medium | Open |
-| 12 | Garbled output when resolving conflicts | Low | Open |
-| 13 | Filesystem errors are ignored during linking | Medium | Open |
-| 14 | Backups and moved files end up in the synced repository | Medium | Open |
+| 12 | Garbled output when resolving conflicts | Low | Fixed `595307e` |
+| 13 | Filesystem errors are ignored during linking | Medium | Fixed `c381552` |
+| 14 | Backups and moved files end up in the synced repository | Medium | Partly fixed `c381552` |
 | 15 | Link tracking file is fragile | Low | Open |
-| 16 | Git errors carry no detail | Low | Open |
+| 16 | Git errors carry no detail | Low | Fixed `595307e` |
 | 17 | Structure: `os.Exit` in internal packages, global state | Medium | Open |
 | 18 | Tests only cover the fixed areas | Medium | Partly fixed |
 | 19 | Go style issues | Low | Open |
@@ -116,6 +116,42 @@ Only `manual` and `remote` were compared against. Any other value, including a t
 
 **Fix:** values other than `manual`, `local` and `remote` are rejected when the config is loaded. Test: `TestValidateConfigSyncStrategy`.
 
+### 12. Garbled output when resolving conflicts
+
+`PrintMessage` uses only its first three arguments. `PrintMessage("Auto-resolving conflict in", file, "using", strategy, "version")` printed `Auto-resolving conflict in: <file> => using`. Also, `"...Applying strategy:"` followed by the value printed a double colon.
+
+**Fix:** both calls now pass three arguments, so the output reads `Auto-resolving conflict in: <file> => using local version`. The print helpers themselves are still fragile (see #19).
+
+### 13. Filesystem errors are ignored during linking
+
+- If `MkdirAll` failed for the target's parent folder, nothing was reported.
+- The result of `os.Remove(target)` in force mode was not checked.
+- Moving an existing file into the repository (`os.Rename`) only reported success. On failure, the user just saw "Source does not exist".
+- "Linking" was printed before the result of `os.Symlink` was known.
+- Folders were created with `os.ModePerm` (0777, reduced by umask).
+
+**Fix:**
+
+- `prepareTargetSource` now returns an error, and the entry is skipped with the cause, e.g. `~/blocker is not a directory`.
+- "Linking" is printed only after the link exists.
+- Folders are created with 0755.
+
+Moves across filesystems still fail (`EXDEV`), but the error is now reported instead of hidden. A copy fallback wasn't added, since the dotfiles folder, targets and backup folder are normally all under `$HOME`.
+
+Tests: `TestHandleDot*`, `TestPrepareTargetSourceReportsErrors`.
+
+### 14. Backups end up in the synced repository
+
+With `-f`, `link` moved an existing target to `<source>.conflict` inside the dotfiles folder, and the next `sync` committed and pushed it.
+
+**Fix:** backups are written to `$XDG_DATA_HOME/foondot/backup/<target path>`, outside the repository, with a number appended when a backup already exists. Test: `TestHandleDotForceBacksUpOutsideDotfiles`. Moving a target into the dotfiles folder when its source doesn't exist yet is intended, and remains open below.
+
+### 16. Git errors carry no detail
+
+`stageAll`, `commit` and similar helpers discarded git's stderr, so a failure showed up as `exit status 1`. For example, a missing git identity was reported only as "failed to commit: exit status 1".
+
+**Fix:** all git commands except `pull` and `push`, which stream their output to the terminal, now include git's message in the returned error. Tests: `TestCommitErrorIncludesGitMessage`, `TestGitOutputErrorIncludesStderr`.
+
 ### 21. README is out of date
 
 The README named `link` as the default in one place and `sync` in another. It didn't document `sync_strategy`, and it still said conflicts always abort.
@@ -134,7 +170,7 @@ Unknown commands and unexpected arguments now exit with 2. `link` still always e
 
 ### 11. Repository detection assumes a plain `.git` folder
 
-**Where:** `internal/git/git.go:105` (`isRepo`), `:113` (`isRebasing`)
+**Where:** `internal/git/git.go:135` (`isRepo`), `:143` (`isRebasing`)
 
 - `isRebasing` looks for `<dotfiles>/.git/rebase-*`. That fails for worktrees and submodules, where `.git` is a file, and when the dotfiles folder is a subfolder of a repository. The code then reports "failed to pull" instead of applying the strategy.
 - It also treats any error other than "not found" (e.g. permission denied) as "rebasing".
@@ -145,53 +181,22 @@ Unknown commands and unexpected arguments now exit with 2. `link` still always e
 - Use `git rev-parse --git-path rebase-merge` (and `rebase-apply`) to find the rebase state.
 - Require `git rev-parse --show-toplevel` to equal the dotfiles folder, or pass the folder as a pathspec to `git add`.
 
-### 12. Garbled output when resolving conflicts
-
-**Where:** `internal/git/git.go:176`, `:37`
-
-`PrintMessage` uses only its first three arguments. `PrintMessage("Auto-resolving conflict in", file, "using", strategy, "version")` prints `Auto-resolving conflict in: <file> => using`. Also, `"...Applying strategy:"` followed by the value prints a double colon.
-
-**Recommendation:** fix these calls. Better, switch the print helpers to format strings (see #19).
-
-### 13. Filesystem errors are ignored during linking
-
-**Where:** `internal/dots/dots.go:204`, `:215`, `:238`, `:292`
-
-- If `MkdirAll` fails for the target's parent folder, nothing is reported.
-- The result of `os.Remove(target)` in force mode is not checked.
-- Moving an existing file into the repository (`os.Rename`) reports only success. It fails across filesystems (`EXDEV`), and the user then just sees "Source does not exist".
-- "Linking" is printed before the result of `os.Symlink` is known.
-- Folders are created with `os.ModePerm` (0777, reduced by umask).
-
-**Recommendation:** report every error with its cause. Fall back to copy-and-remove when `Rename` fails with `EXDEV`. Use 0755 for created folders.
-
-### 14. Backups and moved files end up in the synced repository
+### 14. Moved files end up in the synced repository (partly fixed)
 
 **Where:** `internal/dots/dots.go` (`prepareTargetSource`) together with `sync`
 
-`link` moves existing target files into the dotfiles folder, and with `-f` it also leaves `*.conflict` backups there. `sync` then stages everything with `git add -A` and pushes. A file that happened to exist at a target path, and possibly contains secrets, is published by the next sync without being reviewed.
+When a target exists but its source doesn't, `link` moves the target into the dotfiles folder. That's how you add an existing file to your dotfiles. `sync` then stages everything with `git add -A` and pushes. A file that happened to exist at a target path, and possibly contains secrets, is published by the next sync without being reviewed. Backups made with `-f` no longer end up there (see the fixed section).
 
-**Recommendation:**
-
-- Write `.conflict` backups outside the repository (e.g. under `$XDG_DATA_HOME/foondot/backup`), or add `*.conflict*` to the repository's `.gitignore`.
-- Consider having `sync` list new files before committing, or offer a `--dry-run`.
+**Recommendation:** have `sync` list new files before committing, or offer a `--dry-run`.
 
 ### 15. Link tracking file is fragile
 
-**Where:** `internal/config/config.go:155`, `:178`
+**Where:** `internal/config/config.go:156`, `:179`
 
 - Any error reading `dots.json`, not just "file not found", is treated as an empty list. The file is then overwritten and all tracking is lost, so old links are never cleaned up.
 - The write isn't atomic. An interruption can leave broken JSON, which then blocks every later `link`.
 
 **Recommendation:** only treat `fs.ErrNotExist` as empty, and write to a temporary file that is then renamed over the old one.
-
-### 16. Git errors carry no detail
-
-**Where:** `internal/git/git.go:253` and other command helpers
-
-`stageAll`, `commit` and similar helpers discard git's stderr, so a failure shows up as `exit status 1`. For example, a missing git identity is reported only as "failed to commit: exit status 1".
-
-**Recommendation:** use `CombinedOutput()` and include git's message in the returned error.
 
 ### 17. Structure: `os.Exit` in internal packages, global state
 
@@ -202,9 +207,8 @@ Unknown commands and unexpected arguments now exit with 2. `link` still always e
 
 ### 18. Tests only cover the fixed areas (partly fixed)
 
-Tests now cover filtering, cleanup, link ownership, absolute targets, the conflict strategies, git output parsing, the conflict-marker check and `sync_strategy` validation. Still missing:
+Tests now cover filtering, cleanup, link ownership, absolute targets, moving targets and backups, error reporting, the conflict strategies, git output parsing and errors, the conflict-marker check and `sync_strategy` validation. Still missing:
 
-- `prepareTargetSource` and `doLink` (moves, `.conflict` naming, force mode)
 - loading and decoding the config file
 - the `Sync` flow end to end
 - command-line argument handling
@@ -213,7 +217,7 @@ Tests now cover filtering, cleanup, link ownership, absolute targets, the confli
 
 - Doc comments use `/** ... */` with ` * ` prefixes. `go doc` shows the asterisks, and `git.go` already uses `//` comments.
 - File types are plain integer constants. A named type (`type FileType int`) would let the compiler catch misuse.
-- `PrintMessage` and `PrintError` pick a format from the number of arguments. Extra arguments are dropped (see #12), and calling them with no arguments panics.
+- `PrintMessage` and `PrintError` pick a format from the number of arguments. Extra arguments are silently dropped (this caused #12), and calling them with no arguments panics.
 - `path` is used where `path/filepath` belongs for filesystem paths.
 - `os.IsNotExist` is used instead of `errors.Is(err, fs.ErrNotExist)`.
 - `[]byte(data)` converts data that is already `[]byte`.
