@@ -85,7 +85,9 @@ func conflictingCloneFile(t *testing.T, name string) string {
 
 	commitFile(t, local, name, "local\n")
 
-	if err := pull(local); err == nil {
+	cmd := exec.Command("git", "pull", "--rebase")
+	cmd.Dir = local
+	if err := cmd.Run(); err == nil {
 		t.Fatal("expected pull to fail with a conflict")
 	}
 	if !isRebasing(local) {
@@ -408,6 +410,126 @@ func TestSyncPullsRemoteChanges(t *testing.T) {
 
 	if _, err := os.Stat(filepath.Join(local, "remote-file")); err != nil {
 		t.Errorf("remote change not pulled: %v", err)
+	}
+}
+
+// pushFromOtherClone commits a file in another clone of remote and pushes it.
+func pushFromOtherClone(t *testing.T, remote, name, content string) {
+	t.Helper()
+	other := filepath.Join(t.TempDir(), "other")
+	run(t, filepath.Dir(other), "clone", "-q", remote, other)
+	if dir := filepath.Dir(filepath.Join(other, name)); dir != other {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	commitFile(t, other, name, content)
+	run(t, other, "push", "-q")
+}
+
+func TestSyncKeepsLocallyChangedFiles(t *testing.T) {
+	local, remote := syncedClone(t)
+	file := filepath.Join(local, "sway", "config")
+	writeTestFile(t, file, "2\n")
+	before, err := os.Stat(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pushFromOtherClone(t, remote, "remote-file", "x\n")
+
+	if err := Sync(local, Options{Strategy: "manual"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Rebasing in place would replace the file twice, through its old content.
+	after, err := os.Stat(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(before, after) {
+		t.Error("a file only changed locally was rewritten during sync")
+	}
+	if got := readFile(t, file); got != "2\n" {
+		t.Errorf("file = %q, want local content", got)
+	}
+	if _, err := os.Stat(filepath.Join(local, "remote-file")); err != nil {
+		t.Errorf("remote change not pulled: %v", err)
+	}
+	if got := run(t, remote, "log", "--format=%s", "main"); got != "Updated sway\nchange remote-file\nchange sway/config\n" {
+		t.Errorf("remote history = %q, want the local commit rebased onto the remote one", got)
+	}
+	if got := run(t, local, "status", "--porcelain"); got != "" {
+		t.Errorf("working tree not clean after sync:\n%s", got)
+	}
+	if got := run(t, local, "worktree", "list", "--porcelain"); strings.Count(got, "worktree ") != 1 {
+		t.Errorf("temporary worktree left behind:\n%s", got)
+	}
+}
+
+func TestSyncConflictStrategies(t *testing.T) {
+	for strategy, want := range map[string]string{"local": "local\n", "remote": "remote\n"} {
+		t.Run(strategy, func(t *testing.T) {
+			local, remote := syncedClone(t)
+			pushFromOtherClone(t, remote, "sway/config", "remote\n")
+			writeTestFile(t, filepath.Join(local, "sway", "config"), "local\n")
+
+			if err := Sync(local, Options{Strategy: strategy}); err != nil {
+				t.Fatal(err)
+			}
+
+			if got := readFile(t, filepath.Join(local, "sway", "config")); got != want {
+				t.Errorf("file = %q, want %q", got, want)
+			}
+			if got := run(t, remote, "show", "main:sway/config"); got != want {
+				t.Errorf("pushed file = %q, want %q", got, want)
+			}
+			if isRebasing(local) {
+				t.Error("still rebasing")
+			}
+		})
+	}
+}
+
+func TestSyncConflictManual(t *testing.T) {
+	local, remote := syncedClone(t)
+	pushFromOtherClone(t, remote, "sway/config", "remote\n")
+	remoteBefore := run(t, remote, "rev-parse", "main")
+	file := filepath.Join(local, "sway", "config")
+	writeTestFile(t, file, "local\n")
+
+	err := Sync(local, Options{Strategy: "manual"})
+
+	if err == nil || !strings.Contains(err.Error(), "manual") {
+		t.Errorf("got %v, want an error about the manual strategy", err)
+	}
+	if got := readFile(t, file); got != "local\n" {
+		t.Errorf("file = %q, want local content kept", got)
+	}
+	if isRebasing(local) {
+		t.Error("dotfiles repository left rebasing")
+	}
+	if got := run(t, local, "status", "--porcelain"); got != "" {
+		t.Errorf("local changes not committed:\n%s", got)
+	}
+	if got := run(t, remote, "rev-parse", "main"); got != remoteBefore {
+		t.Error("pushed despite the conflict")
+	}
+	if got := run(t, local, "worktree", "list", "--porcelain"); strings.Count(got, "worktree ") != 1 {
+		t.Errorf("temporary worktree left behind:\n%s", got)
+	}
+}
+
+func TestSyncPushesEarlierCommits(t *testing.T) {
+	local, remote := syncedClone(t)
+	// Committed, but not pushed, e.g. after a sync that failed to push.
+	commitFile(t, local, "bashrc", "1\n")
+
+	if err := Sync(local, Options{Strategy: "manual"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if got, want := run(t, remote, "rev-parse", "main"), run(t, local, "rev-parse", "HEAD"); got != want {
+		t.Errorf("remote is at %s, want local HEAD %s", got, want)
 	}
 }
 

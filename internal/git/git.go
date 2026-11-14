@@ -29,9 +29,14 @@ type Options struct {
 }
 
 // Sync orchestrates the automatic synchronization process for the dotfiles directory.
-// It pulls remote changes with rebase, stages local modifications, creates a contextual commit message,
-// and pushes the resulting commit back to the remote repository. Without a remote
-// or an upstream branch, it only commits locally.
+// It stages local modifications and commits them with a contextual commit message,
+// rebases them onto the remote changes, and pushes the result back to the remote
+// repository. Without a remote or an upstream branch, it only commits locally.
+//
+// Local changes are committed before pulling, so that pulling never has to stash
+// them, and files that only changed locally are left alone. Programs that watch
+// their config files (e.g. a compositor that reloads on change) would otherwise
+// see them briefly reset, empty or missing while git rewrites them.
 func Sync(dotfilesDir string, opts Options) error {
 	if err := checkRepo(dotfilesDir); err != nil {
 		return err
@@ -46,24 +51,9 @@ func Sync(dotfilesDir string, opts Options) error {
 		return showPending(dotfilesDir, remote)
 	}
 
-	// 1. Pull changes first using rebase and autostash.
-	// This ensures we have the latest remote changes and helps avoid merge commits.
-	if !remote.pull {
-		utils.PrintValue("Skipping pull", remote.reason)
-	} else if err := pull(dotfilesDir); err != nil {
-		if isRebasing(dotfilesDir) {
-			utils.PrintValue("Conflicts detected during pull. Applying strategy", opts.Strategy)
-			if err := resolveRebase(dotfilesDir, opts.Strategy); err != nil {
-				return fmt.Errorf("failed to resolve conflicts: %w. Please resolve manually", err)
-			}
-		} else {
-			return fmt.Errorf("failed to pull changes: %w. Please resolve conflicts manually", err)
-		}
-	}
-
 	utils.PrintValue("Checking for changes in", dotfilesDir)
 
-	// 2. Stage all changes before generating the status.
+	// 1. Stage all changes before generating the status.
 	// This ensures untracked files are included and represented correctly in the porcelain output.
 	if err := stageAll(dotfilesDir); err != nil {
 		return fmt.Errorf("failed to stage changes: %w", err)
@@ -75,34 +65,74 @@ func Sync(dotfilesDir string, opts Options) error {
 	}
 
 	if len(changes) == 0 {
-		utils.PrintMessage("No local changes to sync.")
-		return nil
+		utils.PrintMessage("No local changes to commit.")
+	} else {
+		// Safety check: Ensure no conflict markers are about to be committed.
+		if err := checkConflictMarkers(dotfilesDir, changes); err != nil {
+			return err
+		}
+
+		// 2. Generate a human-readable commit message based on the staged changes.
+		message := generateCommitMessage(dotfilesDir, changes)
+		utils.PrintValue("Committing", message)
+		if err := commit(dotfilesDir, message); err != nil {
+			return fmt.Errorf("failed to commit: %w", err)
+		}
 	}
 
-	// Safety check: Ensure no conflict markers are about to be committed.
-	if err := checkConflictMarkers(dotfilesDir, changes); err != nil {
+	// 3. Pull remote changes, rebasing the local commits onto them to avoid merge commits.
+	if !remote.pull {
+		utils.PrintValue("Skipping pull", remote.reason)
+	} else if err := pull(dotfilesDir, opts.Strategy); err != nil {
 		return err
 	}
 
-	// 3. Generate a human-readable commit message based on the staged changes.
-	message := generateCommitMessage(dotfilesDir, changes)
-	utils.PrintValue("Committing", message)
-	if err := commit(dotfilesDir, message); err != nil {
-		return fmt.Errorf("failed to commit: %w", err)
-	}
-
-	// 4. Push the new commit to the remote repository.
+	// 4. Push the local commits to the remote repository.
 	if !remote.push {
 		utils.PrintValue("Skipping push", remote.reason)
 	} else {
-		utils.PrintMessage("Pushing changes...")
-		if err := push(dotfilesDir); err != nil {
-			return fmt.Errorf("failed to push: %w", err)
+		unpushed, err := hasUnpushedCommits(dotfilesDir, remote)
+		if err != nil {
+			return err
+		}
+		if !unpushed {
+			utils.PrintMessage("Nothing to push.")
+		} else {
+			utils.PrintMessage("Pushing changes...")
+			if err := push(dotfilesDir); err != nil {
+				return fmt.Errorf("failed to push: %w", err)
+			}
 		}
 	}
 
 	utils.PrintMessage("Sync completed successfully")
 	return nil
+}
+
+// hasUnpushedCommits reports whether the current branch has commits that the
+// upstream branch doesn't have.
+func hasUnpushedCommits(dir string, remote remotePlan) (bool, error) {
+	if !hasHEAD(dir) {
+		return false, nil
+	}
+	if !remote.pull {
+		// The upstream branch doesn't exist yet, pushing creates it.
+		return true, nil
+	}
+	cmd := exec.Command("git", "rev-list", "--count", "@{upstream}..HEAD")
+	cmd.Dir = dir
+	out, err := gitOutput(cmd)
+	if err != nil {
+		return false, fmt.Errorf("failed to compare with the upstream branch: %w", err)
+	}
+	return strings.TrimSpace(string(out)) != "0", nil
+}
+
+// hasHEAD reports whether the current branch has any commits.
+func hasHEAD(dir string) bool {
+	cmd := exec.Command("git", "rev-parse", "--verify", "-q", "HEAD")
+	cmd.Dir = dir
+	return cmd.Run() == nil
 }
 
 // remotePlan says whether sync pulls from and pushes to the remote.
@@ -443,14 +473,132 @@ func getChanges(dir string, args ...string) ([]Change, error) {
 	return changes, nil
 }
 
-// pull fetches and integrates remote changes into the local branch using rebase and autostash to avoid merge commits.
-func pull(dir string) error {
+// pull fetches the upstream branch and brings its new commits into the local
+// branch, rebasing local commits onto them to avoid merge commits. Conflicts are
+// resolved with the given strategy.
+//
+// Only files that differ between the old and the new HEAD are written. A plain
+// `git pull --rebase` first checks out the upstream commit and then replays the
+// local commits, rewriting every locally changed file twice, even files the
+// remote didn't touch. So when local commits have to be rebased, the rebase runs
+// in a temporary worktree, and the branch is then moved to the result.
+func pull(dir, strategy string) error {
 	utils.PrintMessage("Pulling changes...")
-	cmd := exec.Command("git", "pull", "--rebase", "--autostash")
+	fetchCmd := exec.Command("git", "fetch")
+	fetchCmd.Dir = dir
+	fetchCmd.Stdout = os.Stdout
+	fetchCmd.Stderr = os.Stderr
+	if err := fetchCmd.Run(); err != nil {
+		return fmt.Errorf("failed to fetch changes: %w", err)
+	}
+
+	cmd := exec.Command("git", "rev-parse", "--verify", "@{upstream}")
 	cmd.Dir = dir
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	out, err := gitOutput(cmd)
+	if err != nil {
+		return fmt.Errorf("failed to read the upstream branch: %w", err)
+	}
+	upstream := strings.TrimSpace(string(out))
+
+	if !hasHEAD(dir) {
+		// Nothing committed yet, take the upstream branch as it is.
+		return fastForward(dir, upstream)
+	}
+
+	cmd = exec.Command("git", "rev-list", "--left-right", "--count", "HEAD..."+upstream)
+	cmd.Dir = dir
+	out, err = gitOutput(cmd)
+	if err != nil {
+		return fmt.Errorf("failed to compare with the upstream branch: %w", err)
+	}
+	counts := strings.Fields(string(out))
+	if len(counts) != 2 {
+		return fmt.Errorf("unexpected output from git rev-list: %q", out)
+	}
+	ahead, behind := counts[0], counts[1]
+
+	switch {
+	case behind == "0":
+		utils.PrintMessage("No remote changes to pull.")
+		return nil
+	case ahead == "0":
+		return fastForward(dir, upstream)
+	default:
+		return rebaseOnto(dir, upstream, strategy)
+	}
+}
+
+// fastForward moves the current branch forward to the given commit.
+func fastForward(dir, commit string) error {
+	cmd := exec.Command("git", "merge", "--ff-only", "-q", commit)
+	cmd.Dir = dir
+	if err := runGit(cmd); err != nil {
+		return fmt.Errorf("failed to pull changes: %w", err)
+	}
+	return nil
+}
+
+// rebaseOnto rebases the local commits onto the upstream commit in a temporary
+// worktree, resolving conflicts with the given strategy, and then moves the
+// current branch to the result. The dotfiles working tree is only touched once
+// the rebase has succeeded, and only for files that differ.
+func rebaseOnto(dir, upstream, strategy string) error {
+	// Like `git pull --rebase`, leave out commits the upstream branch dropped
+	// when it was rewritten. Without a fork point, the merge base is used.
+	args := []string{"rebase", "-q", upstream}
+	forkCmd := exec.Command("git", "merge-base", "--fork-point", "@{upstream}", "HEAD")
+	forkCmd.Dir = dir
+	if out, err := forkCmd.Output(); err == nil {
+		args = []string{"rebase", "-q", "--onto", upstream, strings.TrimSpace(string(out))}
+	}
+
+	tmp, err := os.MkdirTemp("", "foondot-sync-")
+	if err != nil {
+		return fmt.Errorf("failed to create a temporary directory for the rebase: %w", err)
+	}
+	defer os.RemoveAll(tmp)
+	worktree := filepath.Join(tmp, "worktree")
+
+	addCmd := exec.Command("git", "worktree", "add", "-q", "--detach", worktree, "HEAD")
+	addCmd.Dir = dir
+	if err := runGit(addCmd); err != nil {
+		return fmt.Errorf("failed to create a worktree for the rebase: %w", err)
+	}
+	defer func() {
+		removeCmd := exec.Command("git", "worktree", "remove", "--force", worktree)
+		removeCmd.Dir = dir
+		if err := runGit(removeCmd); err != nil {
+			utils.PrintValue("Failed to remove the temporary worktree", err.Error())
+		}
+	}()
+
+	rebaseCmd := exec.Command("git", args...)
+	rebaseCmd.Dir = worktree
+	if err := runGit(rebaseCmd); err != nil {
+		if !isRebasing(worktree) {
+			return fmt.Errorf("failed to pull changes: %w", err)
+		}
+		utils.PrintValue("Conflicts detected during pull. Applying strategy", strategy)
+		if err := resolveRebase(worktree, strategy); err != nil {
+			return fmt.Errorf("failed to resolve conflicts: %w. Your changes are committed locally, run `git pull --rebase` in the dotfiles directory to resolve them manually", err)
+		}
+	}
+
+	cmd := exec.Command("git", "rev-parse", "HEAD")
+	cmd.Dir = worktree
+	out, err := gitOutput(cmd)
+	if err != nil {
+		return fmt.Errorf("failed to read the rebased commit: %w", err)
+	}
+
+	// The working tree is clean, everything was committed. --keep refuses to
+	// overwrite files changed since then instead of discarding the changes.
+	resetCmd := exec.Command("git", "reset", "-q", "--keep", strings.TrimSpace(string(out)))
+	resetCmd.Dir = dir
+	if err := runGit(resetCmd); err != nil {
+		return fmt.Errorf("failed to update the dotfiles directory with the rebased commits: %w", err)
+	}
+	return nil
 }
 
 // stageAll stages all modifications, additions, and deletions in the working directory using 'git add -A'.
@@ -515,9 +663,7 @@ func hasInIndex(dir, key string) bool {
 // It groups modifications by top-level directory or file to summarize additions, updates, and removals.
 func generateCommitMessage(dir string, changes []Change) string {
 	// Before the first commit there is no HEAD, and everything is added.
-	headCmd := exec.Command("git", "rev-parse", "--verify", "-q", "HEAD")
-	headCmd.Dir = dir
-	headExists := headCmd.Run() == nil
+	headExists := hasHEAD(dir)
 
 	added := make(map[string]bool)
 	updated := make(map[string]bool)
