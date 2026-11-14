@@ -52,10 +52,12 @@ Creates symlinks from the `source` files/directories in your `dotfiles` director
 
 Automatically synchronizes your dotfiles repository using Git. The `dotfiles` directory must be the top level of its own Git repository, not a subdirectory of a larger one. It follows a streamlined workflow:
 
-1.  **Pull**: Performs a `git pull --rebase --autostash` to integrate remote changes while preserving local modifications.
-2.  **Stage**: Automatically stages all changes in the dotfiles directory (`git add -A`).
-3.  **Commit**: Generates a "smart" commit message based on the changed top-level folders and files (e.g., `Updated sway and mako, Added alacritty`).
+1.  **Stage**: Automatically stages all changes in the dotfiles directory (`git add -A`).
+2.  **Commit**: Generates a "smart" commit message based on the changed top-level folders and files (e.g., `Updated sway and mako, Added alacritty`).
+3.  **Pull**: Fetches the remote changes and rebases the local commits onto them, like `git pull --rebase`. Conflicts are resolved according to `sync_strategy`.
 4.  **Push**: Pushes the local commits to the remote tracking branch.
+
+Pulling only writes the files that the remote changed. Files you changed locally are left in place, so programs that reload their config when it changes don't see it briefly reverted, empty or missing. To get there, the rebase runs in a temporary git worktree, and the branch is then moved to the result. If the `manual` strategy stops on a conflict, your changes stay committed locally but aren't pushed. Run `git pull --rebase` in the dotfiles directory to resolve the conflict.
 
 Without a remote, or if the current branch has no upstream branch, `sync` only commits locally and skips pulling and pushing. It tells you how to set the upstream branch, e.g. `git push -u origin main`. If the upstream branch is configured but doesn't exist on the remote yet, for example after cloning an empty repository, the first `sync` pushes it.
 
