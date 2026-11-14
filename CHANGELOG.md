@@ -1,6 +1,12 @@
 # Changelog
 
-### 1.0.1 (2026-09-29)
+### 1.0.2 (2026-11-14)
+
+#### Bug Fixes
+
+- git: don't rewrite locally changed files when syncing (66c3fc0)
+
+### v1.0.1 (2026-09-29)
 
 #### Bug Fixes
 
